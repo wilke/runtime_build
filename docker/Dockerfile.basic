@@ -1,0 +1,47 @@
+# Basic (finish-1) runtime environment for BV-BRC/PATRIC - mirrors finish-1.def
+# This builds on base and adds core BV-BRC modules for minimal app development
+FROM bvbrc/runtime:base
+
+LABEL maintainer="PATRIC/BV-BRC Team"
+LABEL description="Basic runtime with core BV-BRC modules - mirrors finish-1.def"
+
+# Set environment variables
+ENV BASE=/opt/patric-common
+ENV RT=/opt/patric-common/runtime
+ENV BUILD_TOOLS=/opt/patric-common/runtime/build-tools
+ENV TARGET=/opt/patric-common/runtime
+ENV PATH=/opt/patric-common/runtime/bin:$PATH
+ENV CPATH=/opt/patric-common/runtime/include
+ENV LIBRARY_PATH=/opt/patric-common/runtime/lib
+ENV PERL5LIB=/opt/patric-common/runtime/lib/perl5
+
+# Create runtime directory
+RUN mkdir -p /opt/patric-common/runtime
+
+# Clone runtime_build repository
+WORKDIR /
+RUN git clone https://github.com/BV-BRC/runtime_build
+
+# Copy module data files
+COPY ubuntu-22/modules-core.dat /ubuntu-bootstrap/
+COPY ubuntu-22/modules-bio-core.dat /ubuntu-bootstrap/
+COPY ubuntu-22/modules-anno-core.dat /ubuntu-bootstrap/
+
+# Build core modules
+WORKDIR /runtime_build
+RUN ./bootstrap_modules.pl -d $RT -m /ubuntu-bootstrap/modules-core.dat || true
+RUN ./bootstrap_modules.pl -d $RT -m /ubuntu-bootstrap/modules-bio-core.dat || true
+RUN ./bootstrap_modules.pl -d $RT -m /ubuntu-bootstrap/modules-anno-core.dat || true
+
+# Note about Glimmer: The system package tigr-glimmer installs to:
+# /usr/lib/tigr-glimmer/glimmer3
+# /usr/lib/tigr-glimmer/build-icm
+# /usr/lib/tigr-glimmer/extract
+# /usr/lib/tigr-glimmer/long-orfs
+# etc.
+
+# Set working directory
+WORKDIR /opt/patric-common
+
+# Set default command
+CMD ["/bin/bash"]

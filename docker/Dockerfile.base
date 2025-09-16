@@ -1,0 +1,64 @@
+# Base runtime environment for BV-BRC/PATRIC - mirrors base.def
+# This provides the foundation with all system packages
+FROM ubuntu:jammy
+
+LABEL maintainer="PATRIC/BV-BRC Team"
+LABEL description="Base runtime environment with system packages - mirrors base.def"
+
+# Create necessary directories as in base.def
+RUN mkdir -p /disks /vol /home /homes /nfs
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base development tools
+RUN apt-get update && \
+    apt-get -y install build-essential
+
+# Install system packages from base.def
+RUN apt-get -y install \
+    apt-utils aria2 autoconf automake awscli cmake csh curl daemonize elph git \
+    kmc libboost-all-dev libbz2-dev libdb-dev libffi-dev libkmc-dev liblog4cxx-dev \
+    liblzma-dev libmysqlclient-dev libncurses5-dev libpng-dev libreadline-dev \
+    libsqlite3-dev libtbb-dev libxrender1 locales locales-all lsof lzma-dev \
+    maven nodejs openbabel parallel prodigal progressivemauve psmisc \
+    python2 python3 rsync strace tigr-glimmer trnascan-se unzip valgrind vim wget \
+    zlib1g-dev libxml2-dev libgd-dev libparallel-iterator-perl \
+    freebayes libgetopt-long-descriptive-perl
+
+# Install NGS tools
+RUN apt-get -y install \
+    bedtools hisat2 bwa libeigen3-dev bowtie2 canu sra-toolkit \
+    diamond-aligner minimap2 unicycler bandage pilon racon hmmer2 hmmer mafft circos \
+    figtree mcl raxml phyml capnproto mash muscle exonerate nanopolish stringtie \
+    ivar fastq-pair bedops bbmap \
+    glimpse ant libhdf5-dev liblzma-dev uuid-dev \
+    libfreetype-dev libpcre3-dev libpcre2-dev libtiff-dev libharfbuzz-dev libfribidi-dev libproj-dev \
+    megahit primer3 libbamtools-dev bison flex nodejs npm libglpk-dev lsb-release redis
+
+# Install cufflinks from custom deb (skip if unavailable)
+RUN curl -L -O https://www.cs.uky.edu/~acta225/CS485/repo/dists/jammy/non-free/binary-amd64/science/cufflinks_2.2.1+dfsg.1-10~ngs+1_amd64.deb && \
+    apt-get install -y ./cufflinks_2.2.1+dfsg.1-10~ngs+1_amd64.deb && \
+    rm cufflinks_2.2.1+dfsg.1-10~ngs+1_amd64.deb || \
+    echo "Note: cufflinks custom package not available, skipping"
+
+# Install Java
+RUN apt-get -y install openjdk-11-jdk
+
+# Disable redis service (not needed in container)
+RUN systemctl disable redis || true
+
+# Create build directories
+RUN mkdir /envs && mkdir /build
+
+# Install Anaconda
+RUN curl -O https://repo.anaconda.com/archive/Anaconda3-2023.09-0-Linux-x86_64.sh && \
+    bash Anaconda3-2023.09-0-Linux-x86_64.sh -b -p /envs/conda && \
+    rm Anaconda3-2023.09-0-Linux-x86_64.sh
+
+# Clean up apt cache
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Set default command
+CMD ["/bin/bash"]
