@@ -9,20 +9,20 @@ From: {{base}}
 
     conda_dir=/opt/conda-esmfold
 
-    conda create -p $conda_dir --yes --quiet python=3.11
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
 
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
     # Install PyTorch with CUDA
-    pip install 'torch>=2.6' --index-url https://download.pytorch.org/whl/cu124
+    $conda_dir/bin/pip install 'torch>=2.6' --index-url https://download.pytorch.org/whl/cu124
 
     # Install ESMFoldApp (provides esm-fold-hf CLI + torch, transformers, accelerate, biopython)
-    pip install --no-cache-dir "git+https://github.com/wilke/ESMFoldApp.git#subdirectory=esm_hf"
+    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/ESMFoldApp.git#subdirectory=esm_hf"
 
     # Clean up
     conda clean --all --force-pkgs-dirs --yes
-    pip cache purge
+    $conda_dir/bin/pip cache purge
 
 %environment
 

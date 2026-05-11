@@ -8,16 +8,16 @@ From: {{base}}
 
     conda_dir=/opt/conda-predict
 
-    conda create -p $conda_dir --yes --quiet python=3.12
+    conda create -p $conda_dir --yes --quiet python=3.12 pip
 
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
     # Install predict-structure CLI with all extras (cwl, rocrate, etc.)
-    pip install --no-cache-dir "predict-structure[all] @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+    $conda_dir/bin/pip install --no-cache-dir "predict-structure[all] @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
 
     # Install protein_compare — structure analysis/comparison tool
-    pip install --no-cache-dir "git+https://github.com/wilke/protein_structure_analysis.git"
+    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/protein_structure_analysis.git"
 
     # Symlink into /usr/local/bin for easy access
     ln -sf $conda_dir/bin/predict-structure /usr/local/bin/predict-structure
@@ -25,7 +25,7 @@ From: {{base}}
 
     # Clean up
     conda clean --all --force-pkgs-dirs --yes
-    pip cache purge
+    $conda_dir/bin/pip cache purge
 
 %environment
     export PATH=/opt/conda-predict/bin:$PATH

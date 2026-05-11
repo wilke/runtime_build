@@ -13,23 +13,23 @@ From: {{base}}
 
     conda_dir=/opt/conda-openfold
 
-    conda create -p $conda_dir --yes --quiet python=3.11
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
 
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
     # PyTorch 2.5.1 with cu121 (matches OpenFold's Docker image, compatible with CUDA 12.2)
-    pip install 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu121
 
     # Install OpenFold 3
-    pip install --no-cache-dir openfold3 --extra-index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install --no-cache-dir openfold3 --extra-index-url https://download.pytorch.org/whl/cu121
 
     # Symlink into /usr/local/bin
     ln -sf $conda_dir/bin/run_openfold /usr/local/bin/run_openfold
 
     # Clean up
     conda clean --all --force-pkgs-dirs --yes
-    pip cache purge
+    $conda_dir/bin/pip cache purge
 
 %environment
 
