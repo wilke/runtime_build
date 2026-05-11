@@ -12,50 +12,50 @@ From: {{base}}
 . /opt/miniforge/etc/profile.d/conda.sh
 
     # Create conda environment with Python 3.11
-    conda create -p $conda_dir --yes --quiet python=3.11
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
 
     conda activate $conda_dir
 
     # Ensure setuptools<71 is installed (needed for pkg_resources used by pytorch-lightning)
-    pip install --upgrade pip wheel
-    pip install 'setuptools<71'
+    $conda_dir/bin/pip install --upgrade pip wheel
+    $conda_dir/bin/pip install 'setuptools<71'
 
     # Install conda packages first (openbabel and rdkit work better via conda)
     # Install matplotlib via conda to avoid libstdc++ version mismatch
     conda install --yes --quiet -c conda-forge openbabel rdkit matplotlib
 
     # Install PyTorch 2.1.2 with CUDA 12.1 (H100/H200 compatible)
-    pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 \
+    $conda_dir/bin/pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 \
         --index-url https://download.pytorch.org/whl/cu121
 
     # Install PyTorch Geometric ecosystem
-    pip install torch-geometric==2.4.0
+    $conda_dir/bin/pip install torch-geometric==2.4.0
 
     # Install PyG extensions (pre-compiled for PyTorch 2.1 + CUDA 12.1)
-    pip install torch-scatter torch-sparse torch-cluster torch-spline-conv \
+    $conda_dir/bin/pip install torch-scatter torch-sparse torch-cluster torch-spline-conv \
         -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
 
     # DiffDock core dependencies
-    pip install e3nn==0.5.1 \
+    $conda_dir/bin/pip install e3nn==0.5.1 \
                 pytorch-lightning==2.1.0 \
                 torchmetrics==1.2.0 \
                 fair-esm==1.0.3
 
     # Scientific computing
-    pip install numpy==1.24.3 \
+    $conda_dir/bin/pip install numpy==1.24.3 \
                 scipy==1.11.3 \
                 pandas==2.0.3 \
                 scikit-learn==1.3.2
 
     # Molecular modeling
-    pip install biopython==1.81 \
+    $conda_dir/bin/pip install biopython==1.81 \
                 biopandas==0.4.1 \
                 mdanalysis==2.6.1 \
                 spyrmsd==0.5.2 \
                 prody
 
     # Utilities
-    pip install pyyaml==6.0.1 \
+    $conda_dir/bin/pip install pyyaml==6.0.1 \
                 tqdm==4.66.1 \
                 networkx==3.1 \
                 sympy==1.12 \
@@ -63,16 +63,16 @@ From: {{base}}
                 requests==2.31.0
 
     # Configuration and typing
-    pip install pydantic==1.10.13 \
+    $conda_dir/bin/pip install pydantic==1.10.13 \
                 typing-extensions==4.8.0
 
     # Fix libstdc++ issues: pip packages overwrite conda packages with versions
     # compiled against newer libstdc++. Remove pip versions and reinstall via conda.
-    pip uninstall -y matplotlib rdkit rdkit-pypi || true
+    $conda_dir/bin/pip uninstall -y matplotlib rdkit rdkit-pypi || true
     conda install --yes -c conda-forge matplotlib rdkit --force-reinstall
 
     # Verify rdkit installation
-    python -c "from rdkit import Chem; print('rdkit verification: OK')"
+    $conda_dir/bin/python -c "from rdkit import Chem; print('rdkit verification: OK')"
 
     # Set up conda activation scripts for LD_LIBRARY_PATH
     # This ensures conda's libstdc++ (with GLIBCXX_3.4.31+) is used only when env is active
@@ -99,7 +99,7 @@ EOF
     git checkout v1.1
 
     # Pre-generate SO3/torus cache files (avoids slow first-run computation)
-    cd /opt/diffdock && python -c "from utils.so3 import *; from utils.torus import *"
+    cd /opt/diffdock && $conda_dir/bin/python -c "from utils.so3 import *; from utils.torus import *"
 
     # Download DiffDock-L model weights (single zip containing score_model and confidence_model)
     cd /opt/diffdock
