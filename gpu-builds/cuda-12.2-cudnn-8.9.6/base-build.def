@@ -101,6 +101,11 @@ fi
     # export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
     export CUDNN_VERSION=8.9.6
 
+    # Auto-discover CUDA runtime libs from per-tool conda envs (e.g. Boltz cu13)
+    for d in /opt/conda-*/lib/python*/site-packages/nvidia/*/lib; do
+        [ -d "$d" ] && export LD_LIBRARY_PATH="$d:$LD_LIBRARY_PATH"
+    done
+
 %runscript
     # Default command to run when the container is executed
     echo "This container includes CUDA 12.2, cuDNN 8.9.6, and Miniforge."
