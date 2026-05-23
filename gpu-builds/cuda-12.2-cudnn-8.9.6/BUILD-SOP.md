@@ -112,20 +112,22 @@ pip cache purge
 '
 ```
 
-## Step 5: Verify all tools in the sandbox
+## Step 5: Verify the container
+
+Run the automated test suite against the repacked SIF:
 
 ```bash
-APPTAINER_TMPDIR=/scout/tmp apptainer exec --fakeroot --writable \
-    /scout/tmp/all-sandbox /bin/bash -c '
-echo "=== predict-structure ===" && predict-structure --help | head -5
-echo "=== esm-fold-hf ==="      && /opt/conda-esmfold/bin/esm-fold-hf --help | head -5
-echo "=== boltz ==="             && /opt/conda-boltz/bin/boltz --help | head -5
-echo "=== chai ==="              && /opt/conda-chai/bin/chai-lab --help | head -5
-echo "=== alphafold ==="        && ls /app/alphafold/run_alphafold.py
-'
+./test-container-env.sh /scout/containers/folding_YYMMDD.N.sif
 ```
 
-All five tools should print their help output without errors.
+This checks:
+- Shell environment (`90-environment.sh` parses, `KB_TOP`/`PERL5LIB`/`LD_LIBRARY_PATH` set)
+- BV-BRC runtime (`p3x-app-shepherd` on PATH, `App-PredictStructure.pl` exists and passes `perl -c`)
+- Python tools (`predict-structure --version`, `protein_compare` importable)
+- All 7 conda envs exist
+- CUDA availability and `CUDA_HOME`
+
+All 18 checks should pass.
 
 ## Step 6: Repack into SIF
 
@@ -218,11 +220,7 @@ APPTAINER_TMPDIR=/scout/tmp apptainer build --fakeroot \
 ### Verify
 
 ```bash
-apptainer exec /scout/tmp/folding_YYMMDD.N.sif predict-structure --help
-apptainer exec /scout/tmp/folding_YYMMDD.N.sif /opt/conda-esmfold/bin/esm-fold-hf --help
-apptainer exec /scout/tmp/folding_YYMMDD.N.sif /opt/conda-boltz/bin/boltz --help
-apptainer exec /scout/tmp/folding_YYMMDD.N.sif /opt/conda-chai/bin/chai-lab --help
-apptainer exec /scout/tmp/folding_YYMMDD.N.sif ls /app/alphafold/run_alphafold.py
+./test-container-env.sh /scout/tmp/folding_YYMMDD.N.sif
 ```
 
 Then deploy using Step 7 and Step 8 from the layered build above.

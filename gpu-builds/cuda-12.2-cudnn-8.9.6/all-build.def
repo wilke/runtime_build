@@ -24,11 +24,17 @@ From: nvidia/cuda:12.2.0-devel-ubuntu22.04
     # CUDA/JAX settings for optimal performance
     # Working directory
 if [[ -d /local_databases/chai ]] ; then
+    export CHAI_DOWNLOADS_DIR=/local_databases/chai
 fi
 if [[ -d /local_databases/boltz ]] ; then
+    export BOLTZ_CACHE=/local_databases/boltz
+fi
+if [[ -d /local_databases/esmfold ]] ; then
+    export HF_HOME=/local_databases/esmfold
 fi
 # OpenFold 3 model weights and CCD data (bind-mount from host)
 if [[ -d /local_databases/openfold ]] ; then
+    export OPENFOLD_DATA_DIR=/local_databases/openfold
 fi
     export PATH=/opt/conda-predict/bin:$PATH
     export CUDNN_VERSION=8.9.6
