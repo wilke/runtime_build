@@ -129,7 +129,29 @@ This checks:
 
 All 18 checks should pass.
 
-## Step 6: Repack into SIF
+## Step 6: Stamp BVBRC metadata into the sandbox
+
+Before repacking, stamp `BVBRC.*` labels into `labels.json` so the resulting
+SIF carries build provenance (date, user, runtime_build commit,
+predict-structure version + commit, App-PredictStructure commit).
+
+```bash
+./stamp-labels.sh /scout/tmp/all-sandbox folding_YYMMDD.N.sif
+```
+
+The default base SIF is `/vol/patric3/production/containers/cuda-12.2-025-base-gpu.2026-05-11.002.sif`;
+pass a third argument to override.
+
+The base image's labels (Author, CUDA-Version, build_hash from olson's gitlab,
+etc.) are left untouched — only `BVBRC.*` keys are added/updated.
+
+After repack, verify with:
+
+```bash
+apptainer inspect /scout/containers/folding_YYMMDD.N.sif | grep BVBRC
+```
+
+## Step 7: Repack into SIF
 
 ```bash
 APPTAINER_TMPDIR=/scout/tmp apptainer build --fakeroot \
@@ -140,14 +162,13 @@ APPTAINER_TMPDIR=/scout/tmp apptainer build --fakeroot \
 Replace `YYMMDD.N` with the date and build number (e.g. `260527.1`).
 This takes ~10 minutes and compresses the sandbox back to ~36 GB.
 
-Verify the final SIF:
+Verify the final SIF with the test script:
 
 ```bash
-apptainer exec /scout/tmp/folding_YYMMDD.N.sif predict-structure --help
-apptainer exec /scout/tmp/folding_YYMMDD.N.sif /opt/conda-esmfold/bin/esm-fold-hf --help
+./test-container-env.sh /scout/tmp/folding_YYMMDD.N.sif
 ```
 
-## Step 7: Deploy
+## Step 8: Deploy
 
 Move the SIF and update symlinks:
 
@@ -163,7 +184,7 @@ ln -sf folding_YYMMDD.N.sif folding_prod.sif
 
 CWL tools reference `folding_prod.sif` in production.
 
-## Step 8: Clean up
+## Step 9: Clean up
 
 ```bash
 rm -rf /scout/tmp/all-sandbox
@@ -223,7 +244,7 @@ APPTAINER_TMPDIR=/scout/tmp apptainer build --fakeroot \
 ./test-container-env.sh /scout/tmp/folding_YYMMDD.N.sif
 ```
 
-Then deploy using Step 7 and Step 8 from the layered build above.
+Then stamp labels and deploy using Steps 6–9 from the layered build above.
 
 ### Notes
 
