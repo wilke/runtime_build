@@ -1,12 +1,12 @@
 # Container Build Status
 
-Last updated: 2026-05-22
+Last updated: 2026-06-02
 
 ## Current Production Image
 
 | Field | Value |
 |-------|-------|
-| SIF | `/scout/containers/folding_260522.1.sif` (32 GB) |
+| SIF | `/scout/containers/folding_260602.1.sif` (32 GB) |
 | Symlinks | `folding_dev.sif`, `folding_latest.sif`, `folding_prod.sif` |
 | Base image | `/vol/patric3/production/containers/cuda-12.2-025-base-gpu.2026-05-11.002.sif` |
 | CUDA | 12.2 + cuDNN 8.9.6 |
@@ -15,7 +15,7 @@ Last updated: 2026-05-22
 
 | Tool | Conda env | Version/Commit | PyTorch |
 |------|-----------|----------------|---------|
-| predict-structure | `/opt/conda-predict` (Py 3.12) | v0.16.1 (d7f2a43) | — |
+| predict-structure | `/opt/conda-predict` (Py 3.12) | 0.2.0 (10c9c9c) | — |
 | protein_compare | `/opt/conda-predict` | 0.2.1 (\_\_init\_\_ shows 0.2.0) | — |
 | Boltz-2 | `/opt/conda-boltz` (Py 3.11) | 2.2.1 | 2.12.0+cu130 |
 | Chai-1 | `/opt/conda-chai` (Py 3.10) | latest | cu121 |
@@ -38,7 +38,8 @@ Last updated: 2026-05-22
 
 - **LD_LIBRARY_PATH glob** in `90-environment.sh` — auto-discovers CUDA libs from conda envs (fixes Boltz cu13 `libnvrtc-builtins.so.13.0`)
 - **BV-BRC env vars** in `90-environment.sh` — `KB_TOP`, `PERL5LIB`, `PATH`, `IN_BVBRC_CONTAINER`
-- **Empty `if` blocks removed** from `90-environment.sh` — empty `if [[ -d /local_databases/... ]]; then fi` blocks caused shell parse error, preventing env setup and `p3x-app-shepherd` from being found
+- **Empty `if` blocks removed** from `90-environment.sh` — empty `if [[ -d /local_databases/... ]]; then fi` blocks caused shell parse error under apptainer 1.5.0's strict POSIX env-script parser, preventing env setup and `p3x-app-shepherd` from being found. Apptainer 1.4.5 tolerated the syntax error; 1.5.0 made it fatal.
+- **BVBRC.* SIF labels** — `stamp-labels.sh` writes provenance (predict-structure commit, App-PredictStructure commit, runtime_build commit, build date/user) to `/.singularity.d/labels.json` before repack so `apptainer inspect` shows what's actually in each image
 
 ## Sandbox State
 
@@ -54,7 +55,9 @@ The sandbox persists between builds. To update just the app, modify the sandbox 
 
 | Image | Date | Notes |
 |-------|------|-------|
-| folding_260522.1.sif | 2026-05-22 | Current prod. Fixed empty `if` blocks in 90-environment.sh that broke env setup. |
+| folding_260602.1.sif | 2026-06-02 | Current prod. predict-structure 10c9c9c. |
+| folding_260601.1.sif | 2026-06-01 | predict-structure c30a83e. First build with BVBRC.* labels. |
+| folding_260522.1.sif | 2026-05-22 | Fixed empty `if` blocks in 90-environment.sh that broke env setup under apptainer 1.5.0+. |
 | folding_260515.2.sif | 2026-05-15 | Force-reinstall fix for stale pip cache. |
 | folding_260515.1.sif | 2026-05-15 | Had stale predict-structure code (pip cache issue). |
 | folding_260514.2.sif | 2026-05-14 | Last working image before clean rebuild attempt. Based on production base. |
