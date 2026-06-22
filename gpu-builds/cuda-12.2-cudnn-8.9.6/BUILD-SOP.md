@@ -140,6 +140,55 @@ pip cache purge
 '
 ```
 
+## Step 4b: Deploy the Perl app + app_specs (when App-PredictStructure changes)
+
+**Steps 3–4a only update the Python `predict-structure` package.** The BV-BRC
+service entrypoint is a *Perl* script, `App-PredictStructure.pl`, deployed
+separately at `/opt/p3/deployment/plbin/`. The production base ships it (commit
+`d7f2a43`); a plain Python reinstall does **not** touch it, so app-layer changes
+(e.g. `HF_HUB_OFFLINE`, GPU preflight contract, `--metadata` report provenance)
+will silently never reach the running container unless you redeploy it here.
+
+The deploy mechanism is a plain copy (`make deploy-service-scripts` is just
+`cp` + a wrapper, and the wrapper already exists), so copy the files directly
+from a clean checkout of PredictStructureApp `main`:
+
+```bash
+SB=/scout/tmp/all-sandbox
+git clone --depth 1 https://github.com/CEPI-dxkb/PredictStructureApp.git /scout/tmp/psa-main
+
+# 1. the service script (the wrapper /opt/p3/deployment/bin/App-PredictStructure
+#    already execs this path — no regeneration needed)
+cp /scout/tmp/psa-main/service-scripts/App-PredictStructure.pl \
+   $SB/opt/p3/deployment/plbin/App-PredictStructure.pl
+chmod +x $SB/opt/p3/deployment/plbin/App-PredictStructure.pl
+
+# 2. the PredictStructure app_specs ONLY (the deployment dir also holds other
+#    apps' specs — do NOT wipe it; copy just these files + modes/)
+SPECS=$SB/opt/p3/deployment/services/app_service/app_specs
+cp /scout/tmp/psa-main/app_specs/PredictStructure.json        $SPECS/
+cp /scout/tmp/psa-main/app_specs/PredictStructureFull.spec    $SPECS/
+cp /scout/tmp/psa-main/app_specs/PredictStructureMerged.spec  $SPECS/
+mkdir -p $SPECS/modes && cp /scout/tmp/psa-main/app_specs/modes/*.json $SPECS/modes/
+
+# 3. refresh the dev_container module checkout so stamp-labels.sh records the
+#    correct BVBRC.app_predictstructure_commit
+git -C $SB/build/dev_container/modules/PredictStructureApp fetch -q origin main
+git -C $SB/build/dev_container/modules/PredictStructureApp reset --hard origin/main
+```
+
+Verify with `perl -c` inside the container (it needs the BV-BRC `PERL5LIB`, which
+only exists in the image):
+
+```bash
+apptainer exec --bind $SB/opt/p3/deployment/plbin:/mnt /scout/containers/<any>.sif \
+    perl -c /mnt/App-PredictStructure.pl   # -> "syntax OK"
+```
+
+> If `App-PredictStructure.pl` calls a new `protein_compare` flag (e.g. `--metadata`,
+> PR #70), reinstall `protein_compare` from `wilke/protein_structure_analysis` in
+> Step 4 so the app and report stay in lock-step.
+
 ## Step 5: Verify the container
 
 Run the automated test suite against the repacked SIF:
