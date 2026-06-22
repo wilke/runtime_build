@@ -1,0 +1,40 @@
+
+Bootstrap: localimage
+From: {{base}}
+
+%post -c /bin/bash
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
+
+    conda_dir=/opt/conda-esmfold2
+
+    # Biohub `esm` requires Python >=3.12,<3.13
+    conda create -p $conda_dir --yes --quiet python=3.12 pip
+
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate $conda_dir
+
+    # PyTorch (default PyPI wheels bundle CUDA runtime + cuDNN — cu130)
+    $conda_dir/bin/pip install --no-cache-dir 'torch>=2.6'
+
+    # Biohub ESMFold2: provides transformers.models.esmfold2 + model weights via HF
+    $conda_dir/bin/pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@main"
+
+    # predict-structure into this env so the esmfold2 runner subprocess
+    # (/opt/conda-esmfold2/bin/python -m predict_structure.runners.esmfold2)
+    # can import predict_structure.* — no extras needed, the runner is core.
+    $conda_dir/bin/pip install --no-cache-dir "predict-structure @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+
+    conda clean --all --force-pkgs-dirs --yes
+    $conda_dir/bin/pip cache purge
+
+%environment
+
+if [[ -d /local_databases/esmfold2 ]] ; then
+    export HF_HOME=/local_databases/esmfold2
+fi
+
+%runscript
+
+%labels
+    Description Biohub ESMFold2 (diffusion model, no MSA) — runner shares /opt/conda-esmfold2

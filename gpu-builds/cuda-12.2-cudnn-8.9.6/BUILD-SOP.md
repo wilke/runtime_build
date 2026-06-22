@@ -112,6 +112,34 @@ pip cache purge
 '
 ```
 
+## Step 4a: Install ESMFold2 (Biohub diffusion model)
+
+Mirrors `reqts-esmfold2.def`. Creates `/opt/conda-esmfold2` and installs the
+Biohub `esm` package plus `predict-structure` (the runner subprocess
+`python -m predict_structure.runners.esmfold2` runs inside this env).
+
+```bash
+APPTAINER_TMPDIR=/scout/tmp apptainer exec --fakeroot --writable \
+    /scout/tmp/all-sandbox /bin/bash -c '
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
+
+conda_dir=/opt/conda-esmfold2
+. /opt/miniforge/etc/profile.d/conda.sh
+
+conda create -p $conda_dir --yes --quiet python=3.12 pip
+conda activate $conda_dir
+
+pip install --no-cache-dir "torch>=2.6"
+pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@main"
+pip install --no-cache-dir "predict-structure @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+
+conda clean --all --force-pkgs-dirs --yes
+pip cache purge
+'
+```
+
 ## Step 5: Verify the container
 
 Run the automated test suite against the repacked SIF:
@@ -124,10 +152,12 @@ This checks:
 - Shell environment (`90-environment.sh` parses, `KB_TOP`/`PERL5LIB`/`LD_LIBRARY_PATH` set)
 - BV-BRC runtime (`p3x-app-shepherd` on PATH, `App-PredictStructure.pl` exists and passes `perl -c`)
 - Python tools (`predict-structure --version`, `protein_compare` importable)
-- All 7 conda envs exist
+- All 8 conda envs exist
+- ESMFold2 (`esm` importable in `/opt/conda-esmfold2`, runner module responds to `--help`)
 - CUDA availability and `CUDA_HOME`
 
-All 18 checks should pass.
+All 21 checks should pass. The script accepts either a SIF path or a sandbox
+directory, so you can run it against `/scout/tmp/all-sandbox` before repacking.
 
 ## Step 6: Stamp BVBRC metadata into the sandbox
 
@@ -199,6 +229,7 @@ rm -rf /scout/tmp/all-sandbox
 | Boltz-2 | `/opt/conda-boltz` | `/opt/conda-boltz/bin/boltz predict` |
 | Chai-1 | `/opt/conda-chai` | `/opt/conda-chai/bin/chai-lab fold` |
 | ESMFold | `/opt/conda-esmfold` | `/opt/conda-esmfold/bin/esm-fold-hf` |
+| ESMFold2 | `/opt/conda-esmfold2` | `predict-structure esmfold2 ...` (runner: `python -m predict_structure.runners.esmfold2`) |
 | OpenFold 3 | `/opt/conda-openfold` | `/opt/conda-openfold/bin/run_openfold predict` |
 
 ## Symlink convention

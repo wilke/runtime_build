@@ -3,8 +3,8 @@ set -euo pipefail
 
 SIF="${1:?Usage: $0 <sif-path>}"
 
-if [[ ! -f "$SIF" ]]; then
-    echo "FAIL: SIF not found: $SIF" >&2
+if [[ ! -e "$SIF" ]]; then
+    echo "FAIL: SIF/sandbox not found: $SIF" >&2
     exit 1
 fi
 
@@ -46,9 +46,14 @@ check "protein_compare importable"    run bash -c '. /opt/miniforge/etc/profile.
 
 echo
 echo "== Conda envs exist =="
-for env in predict alphafold boltz chai diffdock esmfold openfold; do
+for env in predict alphafold boltz chai diffdock esmfold esmfold2 openfold; do
     check "/opt/conda-$env"           run test -d "/opt/conda-$env"
 done
+
+echo
+echo "== ESMFold2 =="
+check "esm importable in conda-esmfold2"   run /opt/conda-esmfold2/bin/python -c 'import esm'
+check "esmfold2 runner --help"              run /opt/conda-esmfold2/bin/python -m predict_structure.runners.esmfold2 --help
 
 echo
 echo "== CUDA =="
