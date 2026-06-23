@@ -6,23 +6,23 @@ Last updated: 2026-06-22
 
 | Field | Value |
 |-------|-------|
-| SIF | `/scout/containers/folding_260622.2.sif` (32 GB) |
-| Symlinks | `folding_dev.sif`, `folding_latest.sif`, `folding_prod.sif` → all 260622.2 |
+| SIF | `/scout/containers/folding_260622.3.sif` (32 GB) |
+| Symlinks | `folding_dev.sif`, `folding_latest.sif`, `folding_prod.sif` → all 260622.3 |
 | Base image | `/vol/patric3/production/containers/cuda-12.2-025-base-gpu.2026-05-11.002.sif` |
 | CUDA | 12.2 + cuDNN 8.9.6 |
 
 > predict-structure + App-PredictStructure.pl `f83c788` (main through PR #70),
-> protein_compare `c7cd9c6` (wilke fork). First build that also redeploys the Perl
-> app + app_specs into `/opt/p3/deployment` (prior builds only updated the Python
-> package). Validated on H200: 21/21 env checks + real Boltz fold + report
-> generation with `protein_compare --metadata` (provenance, #70).
+> protein_compare `03a8b0d` (wilke fork, PR #11 default-color-plddt report fix).
+> Report-only bump over 260622.2. `stamp-labels.sh` now also records
+> `BVBRC.protein_compare_commit`. Validated on H200: 21/21 env checks + real Boltz
+> fold + `protein_compare --metadata` report.
 
 ## Tool Versions
 
 | Tool | Conda env | Version/Commit | PyTorch |
 |------|-----------|----------------|---------|
 | predict-structure | `/opt/conda-predict` (Py 3.12) | 0.17.0 (f83c788) | — |
-| protein_compare | `/opt/conda-predict` | c7cd9c6 (wilke fork) | — |
+| protein_compare | `/opt/conda-predict` | 03a8b0d (wilke fork) | — |
 | Boltz-2 | `/opt/conda-boltz` (Py 3.11) | 2.2.1 | 2.12.0+cu130 |
 | Chai-1 | `/opt/conda-chai` (Py 3.10) | latest | cu121 |
 | AlphaFold 2 | `/opt/conda-alphafold` (Py 3.11) | 2.3.2 | JAX 0.4.26 |
@@ -62,7 +62,8 @@ The sandbox persists between builds. To update just the app, modify the sandbox 
 
 | Image | Date | Notes |
 |-------|------|-------|
-| folding_260622.2.sif | 2026-06-22 | Current prod. predict-structure + App-PredictStructure.pl f83c788 (PR #70 `--metadata` report provenance, on top of #57–#68), protein_compare c7cd9c6 (wilke fork). First build to redeploy the Perl app + app_specs into `/opt/p3/deployment` (app commit d7f2a43 → f83c788). Validated on H200: 21/21 + Boltz fold + `protein_compare --metadata` report. |
+| folding_260622.3.sif | 2026-06-23 | Current prod. Report-only bump: protein_compare c7cd9c6 → 03a8b0d (wilke PR #11, default-color-plddt). predict-structure + app unchanged (f83c788). stamp-labels.sh now records BVBRC.protein_compare_commit. Validated: 21/21 + Boltz fold + report. |
+| folding_260622.2.sif | 2026-06-22 | predict-structure + App-PredictStructure.pl f83c788 (PR #70 `--metadata` report provenance, on top of #57–#68), protein_compare c7cd9c6 (wilke fork). First build to redeploy the Perl app + app_specs into `/opt/p3/deployment` (app commit d7f2a43 → f83c788). Validated on H200: 21/21 + Boltz fold + `protein_compare --metadata` report. |
 | folding_260622.1.sif | 2026-06-22 | predict-structure 153439f — PredictStructureApp PRs #57–#68 merged (HF-offline, GPU preflight contract, chai 2048 guard, AF2 auto-multimer, openfold msa-url, esmfold2 tests, app_spec text_input, boltz-report cwl, CI). Validated on H200: 21/21 + real Boltz/ESMFold2/ESMFold folds. |
 | folding_260610.1.sif | 2026-06-10 | Adds `/opt/conda-esmfold2` (Biohub esm 3.3.0). predict-structure 5795319 (post-PR-44 ESMFold2 integration), reinstalled in both predict + esmfold2 envs. 21/21 env checks. |
 | folding_260602.1.sif | 2026-06-02 | Current prod. predict-structure 10c9c9c. |

@@ -23,6 +23,15 @@ else
     PS_COMMIT="unknown"
 fi
 
+# protein_compare (report tool): commit from direct_url.json in conda-predict
+PC_DIST=$(find "$SANDBOX/opt/conda-predict/lib/python3.12/site-packages" \
+    -maxdepth 1 -name 'protein_compare-*.dist-info' -type d 2>/dev/null | head -1)
+if [[ -n "$PC_DIST" ]]; then
+    PC_COMMIT=$(python3 -c "import json; print(json.load(open('$PC_DIST/direct_url.json'))['vcs_info']['commit_id'])" 2>/dev/null || echo "unknown")
+else
+    PC_COMMIT="unknown"
+fi
+
 # App-PredictStructure: read HEAD from the deployed git repo
 APP_REPO="$SANDBOX/build/dev_container/modules/PredictStructureApp"
 if [[ -d "$APP_REPO/.git" ]]; then
@@ -50,6 +59,7 @@ echo "  BVBRC.base_sif                    = $BASE_SIF"
 echo "  BVBRC.runtime_build_commit        = $RB_COMMIT"
 echo "  BVBRC.predict_structure_version   = $PS_VERSION"
 echo "  BVBRC.predict_structure_commit    = $PS_COMMIT"
+echo "  BVBRC.protein_compare_commit      = $PC_COMMIT"
 echo "  BVBRC.app_predictstructure_commit = $APP_COMMIT"
 
 # --- Merge into labels.json ---
@@ -65,6 +75,7 @@ labels.update({
     "BVBRC.runtime_build_commit":        "$RB_COMMIT",
     "BVBRC.predict_structure_version":   "$PS_VERSION",
     "BVBRC.predict_structure_commit":    "$PS_COMMIT",
+    "BVBRC.protein_compare_commit":      "$PC_COMMIT",
     "BVBRC.app_predictstructure_commit": "$APP_COMMIT",
 })
 with open("$LABELS", "w") as f:
