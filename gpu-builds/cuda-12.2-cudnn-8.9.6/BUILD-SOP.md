@@ -115,8 +115,12 @@ pip cache purge
 ## Step 4a: Install ESMFold2 (Biohub diffusion model)
 
 Mirrors `reqts-esmfold2.def`. Creates `/opt/conda-esmfold2` and installs the
-Biohub `esm` package plus `predict-structure` (the runner subprocess
-`python -m predict_structure.runners.esmfold2` runs inside this env).
+Biohub `esm` package. **Do NOT install `predict-structure` into this env** —
+the runner is invoked by file path from the conda-predict installation
+(`{runner:...}` in tools.yml), so a copy here would never be imported. Its
+presence is worse than useless: the old `-m` invocation imported it, rebuilds
+only refreshed conda-predict, and it silently ran June's code for two months
+(PredictStructureApp#98).
 
 ```bash
 APPTAINER_TMPDIR=/scout/tmp apptainer exec --fakeroot --writable \
@@ -133,11 +137,22 @@ conda activate $conda_dir
 
 pip install --no-cache-dir "torch>=2.6"
 pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@main"
-pip install --no-cache-dir "predict-structure @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
 
 conda clean --all --force-pkgs-dirs --yes
 pip cache purge
 '
+```
+
+**Mandatory post-step check** — run from a neutral cwd (apptainer binds $HOME
+and the repo cwd by default, so a naive check from the checkout falsely "finds"
+the package via sys.path):
+
+```bash
+cd /tmp && apptainer exec /scout/tmp/all-sandbox /bin/bash -c '
+n=$(ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+    | xargs -r readlink -f | sort -u | wc -l)
+[ "$n" = "1" ] && echo "OK: single predict_structure install" \
+    || { echo "FATAL: $n real installs — PredictStructureApp#98 hazard"; exit 1; }'
 ```
 
 ## Step 4b: Deploy the Perl app + app_specs (when App-PredictStructure changes)
@@ -278,7 +293,7 @@ rm -rf /scout/tmp/all-sandbox
 | Boltz-2 | `/opt/conda-boltz` | `/opt/conda-boltz/bin/boltz predict` |
 | Chai-1 | `/opt/conda-chai` | `/opt/conda-chai/bin/chai-lab fold` |
 | ESMFold | `/opt/conda-esmfold` | `/opt/conda-esmfold/bin/esm-fold-hf` |
-| ESMFold2 | `/opt/conda-esmfold2` | `predict-structure esmfold2 ...` (runner: `python -m predict_structure.runners.esmfold2`) |
+| ESMFold2 | `/opt/conda-esmfold2` | `predict-structure esmfold2 ...` (runner: conda-esmfold2 python executing the runner FILE from the conda-predict install — never `-m`, see #98) |
 | OpenFold 3 | `/opt/conda-openfold` | `/opt/conda-openfold/bin/run_openfold predict` |
 
 ## Symlink convention
