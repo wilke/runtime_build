@@ -20,10 +20,12 @@ From: {{base}}
     # Biohub ESMFold2: provides transformers.models.esmfold2 + model weights via HF
     $conda_dir/bin/pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@main"
 
-    # predict-structure into this env so the esmfold2 runner subprocess
-    # (/opt/conda-esmfold2/bin/python -m predict_structure.runners.esmfold2)
-    # can import predict_structure.* — no extras needed, the runner is core.
-    $conda_dir/bin/pip install --no-cache-dir "predict-structure @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+    # predict-structure is deliberately NOT installed into this env (#98).
+    # The runner is invoked by file path from the conda-predict installation
+    # ({runner:...} in tools.yml), so a copy here would never be imported —
+    # but its presence is worse than useless: the old -m invocation imported
+    # it, and because rebuilds only refreshed conda-predict, it silently ran
+    # June's code for two months while the labels said otherwise.
 
     conda clean --all --force-pkgs-dirs --yes
     $conda_dir/bin/pip cache purge

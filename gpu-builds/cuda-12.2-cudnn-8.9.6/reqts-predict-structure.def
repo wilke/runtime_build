@@ -23,6 +23,21 @@ From: {{base}}
     ln -sf $conda_dir/bin/predict-structure /usr/local/bin/predict-structure
     ln -sf $conda_dir/bin/protein_compare /usr/local/bin/protein_compare
 
+    # #98 guard: exactly ONE installation of predict_structure may exist in
+    # the image. A second copy (e.g. in a tool env) is a stale-code hazard —
+    # the esmfold2 runner ran June's code for two months because a forgotten
+    # duplicate shadowed every rebuild. Fail the build loudly instead.
+    # readlink -f: conda ships a python3.1 -> python3.12 symlink, so a naive
+    # glob counts the same install twice.
+    n=$(ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+        | xargs -r readlink -f | sort -u | wc -l)
+    if [ "$n" -ne 1 ]; then
+        echo "FATAL: expected exactly 1 predict_structure install, found $n:" >&2
+        ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+            | xargs -r readlink -f | sort -u >&2
+        exit 1
+    fi
+
     # Clean up
     conda clean --all --force-pkgs-dirs --yes
     $conda_dir/bin/pip cache purge
