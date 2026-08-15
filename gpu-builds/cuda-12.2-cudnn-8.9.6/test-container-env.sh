@@ -53,7 +53,11 @@ done
 echo
 echo "== ESMFold2 =="
 check "esm importable in conda-esmfold2"   run /opt/conda-esmfold2/bin/python -c 'import esm'
-check "esmfold2 runner --help"              run /opt/conda-esmfold2/bin/python -m predict_structure.runners.esmfold2 --help
+# The runner is invoked by FILE PATH from the conda-predict install; the tool
+# env deliberately has no predict_structure (PredictStructureApp#98), so the
+# old `-m` form must NOT work — assert both directions.
+check "esmfold2 runner file runs under tool env"  run bash -c '/opt/conda-esmfold2/bin/python /opt/conda-predict/lib/python3.*/site-packages/predict_structure/runners/esmfold2.py --help >/dev/null'
+check "tool env has NO predict_structure (#98)"   run bash -c '! /opt/conda-esmfold2/bin/python -c "import predict_structure" 2>/dev/null'
 
 echo
 echo "== CUDA =="
