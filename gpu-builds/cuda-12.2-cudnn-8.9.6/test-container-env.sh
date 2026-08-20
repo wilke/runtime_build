@@ -60,6 +60,36 @@ check "esmfold2 runner file runs under tool env"  run bash -c '/opt/conda-esmfol
 check "tool env has NO predict_structure (#98)"   run bash -c '! /opt/conda-esmfold2/bin/python -c "import predict_structure" 2>/dev/null'
 
 echo
+echo "== Duplicated copies agree (#110) =="
+# The container carries the Perl app and the app spec in up to three places:
+# the deployed copy the AppService actually reads, the dev_container checkout,
+# and the /kb/module fallback. Only the deployed copies run, so a stale one is
+# invisible until a user hits it -- the #98 and #110 failure mode. Assert every
+# present copy is byte-identical to the deployed one.
+agree() {
+    # $1 = deployed path, $2..= other paths that must match if they exist
+    local deployed="$1"; shift
+    run bash -c '
+        set -e
+        d="$1"; shift
+        test -f "$d" || exit 1
+        want=$(md5sum "$d" | cut -d" " -f1)
+        for p in "$@"; do
+            [ -e "$p" ] || continue
+            [ "$(md5sum "$p" | cut -d" " -f1)" = "$want" ] || exit 1
+        done
+    ' _ "$deployed" "$@"
+}
+check "App-PredictStructure.pl copies agree" agree \
+    /opt/p3/deployment/plbin/App-PredictStructure.pl \
+    /build/dev_container/modules/PredictStructureApp/service-scripts/App-PredictStructure.pl \
+    /kb/module/service-scripts/App-PredictStructure.pl
+check "PredictStructure.json copies agree"   agree \
+    /opt/p3/deployment/services/app_service/app_specs/PredictStructure.json \
+    /build/dev_container/modules/PredictStructureApp/app_specs/PredictStructure.json \
+    /kb/module/app_specs/PredictStructure.json
+
+echo
 echo "== CUDA =="
 check "nvidia-smi accessible"        run bash -c 'nvidia-smi >/dev/null 2>&1 || test -f /usr/local/cuda-12.2/version.json'
 check "CUDA_HOME set"                run bash -c 'test -n "$CUDA_HOME"'

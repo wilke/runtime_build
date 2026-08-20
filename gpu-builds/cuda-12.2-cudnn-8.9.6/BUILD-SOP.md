@@ -5,17 +5,71 @@ prediction container (AlphaFold, Chai, Boltz, ESMFold, predict-structure).
 
 ## Build approaches
 
-There are two ways to build this container:
+There are three ways to build this container:
 
-1. **Layered build** (documented below) — extract an existing base SIF,
-   install additional tools into the sandbox, repack. Use this when adding tools
-   to an existing container or updating individual components.
+0. **Incremental refresh** ([documented first](#incremental-refresh-the-usual-case)) —
+   the sandbox at `/scout/tmp/all-sandbox` already exists from the last build;
+   update only the code that changed and repack. **This is what almost every
+   rebuild actually is.** Steps 3–4a below use `conda create` and will fail on an
+   existing env, so do not start there for a routine rebuild.
 
-2. **Full rebuild** from `all-build.def` (documented at the end) — builds
-   everything from scratch starting from `nvidia/cuda:12.2.0-devel-ubuntu22.04`.
-   Requires the `{{runtime}}` tarball and `{{packages}}` list.
+1. **Layered build** (Steps 1–9) — extract a base SIF, install tools into a
+   fresh sandbox, repack. Use when adding a tool or starting from a new base.
 
-Both approaches have been tested (March 2026).
+2. **Full rebuild** from `all-build.def` (documented at the end) — everything
+   from scratch starting at `nvidia/cuda:12.2.0-devel-ubuntu22.04`. Requires the
+   `{{runtime}}` tarball and `{{packages}}` list.
+
+All three have been used; the incremental path is the one exercised most.
+
+---
+
+## Incremental refresh (the usual case)
+
+The sandbox persists between builds. A routine rebuild is: update the Python
+packages, redeploy the Perl app + app specs, verify, stamp, repack.
+
+### 1. Refresh the Python packages
+
+```bash
+APPTAINER_TMPDIR=/scout/tmp apptainer exec --fakeroot --writable /scout/tmp/all-sandbox /bin/bash -c '
+set -e
+. /opt/miniforge/etc/profile.d/conda.sh
+conda activate /opt/conda-predict
+pip install --no-cache-dir --force-reinstall --no-deps \
+  "predict-structure @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git@main"
+pip install --no-cache-dir --force-reinstall --no-deps \
+  "protein_compare @ git+https://github.com/wilke/protein_structure_analysis.git@main"
+pip cache purge
+'
+```
+
+`--force-reinstall` is mandatory: pip considers an identical version already
+satisfied and would silently keep the old code. `--no-cache-dir` defeats the
+wheel cache, which has served stale builds before. Refresh **both** packages —
+report fixes (histograms, TOC, PAE rendering) ship through `protein_compare`,
+not through `predict-structure`.
+
+### 2. Verify by CONTENT, never by version
+
+Neither package bumps its version per commit, so `--version` and `pip show`
+prove nothing. Grep for a marker unique to the change you are shipping, from a
+neutral cwd (`apptainer` binds `$HOME` and the cwd, so checking from a checkout
+can find the package on `sys.path` instead of in the image):
+
+```bash
+cd /tmp && apptainer exec /scout/tmp/all-sandbox /bin/bash -c '
+SP=/opt/conda-predict/lib/python3.12/site-packages
+grep -c "<a symbol your change introduced>" $SP/predict_structure/<file>.py
+'
+```
+
+### 3. Then continue at [Step 4b](#step-4b-deploy-the-perl-app--app_specs-always)
+
+Step 4b (Perl + app specs), Step 5 (verify), Step 6 (stamp), Step 7 (repack),
+Step 8 (deploy). Steps 1–4a are for fresh sandboxes only.
+
+---
 
 ## Prerequisites
 
@@ -155,14 +209,31 @@ n=$(ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null
     || { echo "FATAL: $n real installs — PredictStructureApp#98 hazard"; exit 1; }'
 ```
 
-## Step 4b: Deploy the Perl app + app_specs (when App-PredictStructure changes)
+## Step 4b: Deploy the Perl app + app_specs (ALWAYS)
+
+**Run this on every build, without deciding whether it is needed.** It was
+written as conditional ("when App-PredictStructure changes"), and the result was
+that Python-only builds skipped it and the container shipped a **June app spec
+beside an August checkout for two months** (PredictStructureApp#110). The copy
+costs a second; judging whether it is needed costs a production bug. The
+verification at the end of this step is what makes the mistake impossible to
+ship silently.
 
 **Steps 3–4a only update the Python `predict-structure` package.** The BV-BRC
 service entrypoint is a *Perl* script, `App-PredictStructure.pl`, deployed
-separately at `/opt/p3/deployment/plbin/`. The production base ships it (commit
-`d7f2a43`); a plain Python reinstall does **not** touch it, so app-layer changes
-(e.g. `HF_HUB_OFFLINE`, GPU preflight contract, `--metadata` report provenance)
-will silently never reach the running container unless you redeploy it here.
+separately at `/opt/p3/deployment/plbin/`. A Python reinstall does **not** touch
+it, so app-layer changes (preflight contract, upload behavior, report wiring)
+never reach the running container unless you redeploy it here.
+
+The container carries these files in **three** places. Only the deployed copies
+are read at runtime, which is exactly why a stale one hides:
+
+| Path | Who reads it |
+|---|---|
+| `/opt/p3/deployment/plbin/App-PredictStructure.pl` | **the running job** |
+| `/opt/p3/deployment/services/app_service/app_specs/` | **the AppService registry** |
+| `/build/dev_container/modules/PredictStructureApp/` | `stamp-labels.sh` provenance |
+| `/kb/module/` | `reqts-bvbrc-service.def` fallback copy |
 
 The deploy mechanism is a plain copy (`make deploy-service-scripts` is just
 `cp` + a wrapper, and the wrapper already exists), so copy the files directly
@@ -170,7 +241,14 @@ from a clean checkout of PredictStructureApp `main`:
 
 ```bash
 SB=/scout/tmp/all-sandbox
-git clone --depth 1 https://github.com/CEPI-dxkb/PredictStructureApp.git /scout/tmp/psa-main
+
+# clean checkout of main (the clone persists between builds -- refresh it)
+if [ -d /scout/tmp/psa-main/.git ]; then
+    git -C /scout/tmp/psa-main fetch -q origin main
+    git -C /scout/tmp/psa-main reset -q --hard origin/main
+else
+    git clone -q --depth 1 https://github.com/CEPI-dxkb/PredictStructureApp.git /scout/tmp/psa-main
+fi
 
 # 1. the service script (the wrapper /opt/p3/deployment/bin/App-PredictStructure
 #    already execs this path — no regeneration needed)
@@ -190,6 +268,10 @@ mkdir -p $SPECS/modes && cp /scout/tmp/psa-main/app_specs/modes/*.json $SPECS/mo
 #    correct BVBRC.app_predictstructure_commit
 git -C $SB/build/dev_container/modules/PredictStructureApp fetch -q origin main
 git -C $SB/build/dev_container/modules/PredictStructureApp reset --hard origin/main
+
+# 4. the /kb/module fallback copy (reqts-bvbrc-service.def puts one here)
+cp /scout/tmp/psa-main/service-scripts/App-PredictStructure.pl $SB/kb/module/service-scripts/
+cp /scout/tmp/psa-main/app_specs/PredictStructure.json         $SB/kb/module/app_specs/
 ```
 
 Verify with `perl -c` inside the container (it needs the BV-BRC `PERL5LIB`, which
@@ -199,6 +281,23 @@ only exists in the image):
 apptainer exec --bind $SB/opt/p3/deployment/plbin:/mnt /scout/containers/<any>.sif \
     perl -c /mnt/App-PredictStructure.pl   # -> "syntax OK"
 ```
+
+**Then prove every copy agrees.** This is the check that would have caught #110:
+
+```bash
+md5sum $SB/opt/p3/deployment/plbin/App-PredictStructure.pl \
+       $SB/build/dev_container/modules/PredictStructureApp/service-scripts/App-PredictStructure.pl \
+       $SB/kb/module/service-scripts/App-PredictStructure.pl \
+       /scout/tmp/psa-main/service-scripts/App-PredictStructure.pl
+
+md5sum $SB/opt/p3/deployment/services/app_service/app_specs/PredictStructure.json \
+       $SB/build/dev_container/modules/PredictStructureApp/app_specs/PredictStructure.json \
+       $SB/kb/module/app_specs/PredictStructure.json \
+       /scout/tmp/psa-main/app_specs/PredictStructure.json
+```
+
+All four hashes in each group must match. `test-container-env.sh` asserts this
+too (see Step 5), so a mismatch fails the build gate rather than shipping.
 
 > If `App-PredictStructure.pl` calls a new `protein_compare` flag (e.g. `--metadata`,
 > PR #70), reinstall `protein_compare` from `wilke/protein_structure_analysis` in
@@ -217,11 +316,19 @@ This checks:
 - BV-BRC runtime (`p3x-app-shepherd` on PATH, `App-PredictStructure.pl` exists and passes `perl -c`)
 - Python tools (`predict-structure --version`, `protein_compare` importable)
 - All 8 conda envs exist
-- ESMFold2 (`esm` importable in `/opt/conda-esmfold2`, runner module responds to `--help`)
+- ESMFold2 (`esm` importable in `/opt/conda-esmfold2`, runner file runs by path,
+  and the tool env has NO `predict_structure` — both directions of the #98 contract)
+- Duplicated copies agree: the Perl app and app spec are byte-identical across
+  the deployed, dev_container, and `/kb/module` locations (#110)
 - CUDA availability and `CUDA_HOME`
 
-All 21 checks should pass. The script accepts either a SIF path or a sandbox
-directory, so you can run it against `/scout/tmp/all-sandbox` before repacking.
+All **24** checks should pass. The script accepts either a SIF path or a sandbox
+directory, so run it against `/scout/tmp/all-sandbox` before repacking — and
+again against the finished SIF.
+
+**Run it as its own step and read the result before packing.** A previous build
+chained verify-and-pack in one command line and packed an image whose env suite
+had failed.
 
 ## Step 6: Stamp BVBRC metadata into the sandbox
 
@@ -264,7 +371,10 @@ Verify the final SIF with the test script:
 
 ## Step 8: Deploy
 
-Move the SIF and update symlinks:
+Deployment has **two distinct stages**, and conflating them is a common
+mistake: nothing under `/scout/containers` is visible to BV-BRC.
+
+### 8a. Local testing (this account, no special privileges)
 
 ```bash
 mv /scout/tmp/folding_YYMMDD.N.sif /scout/containers/
@@ -272,11 +382,48 @@ mv /scout/tmp/folding_YYMMDD.N.sif /scout/containers/
 cd /scout/containers
 ln -sf folding_YYMMDD.N.sif folding_latest.sif
 ln -sf folding_YYMMDD.N.sif folding_dev.sif
-# Only update prod after testing:
-ln -sf folding_YYMMDD.N.sif folding_prod.sif
+ln -sf folding_YYMMDD.N.sif folding_prod.sif   # only after testing
 ```
 
-CWL tools reference `folding_prod.sif` in production.
+`folding_prod.sif` is what local CWL runs and the repo's `perl -c` checks
+resolve. **It has no effect on BV-BRC jobs.**
+
+### 8b. Promotion to BV-BRC (needs the `p3` account)
+
+Two actions, both outside this account:
+
+```bash
+# 1. copy the SIF where the scheduler can stage it
+cp /scout/containers/folding_YYMMDD.N.sif /vol/patric3/production/containers/
+
+# 2. repoint the app at it (on gum, as p3)
+p3x-show-container-config          # inspect ApplicationDefaultContainer
+# ... repoint PredictStructure -> folding_YYMMDD.N.sif
+```
+
+### 8c. Verify the repoint actually took
+
+**Do not skip this.** The repoint has silently failed to take twice. The only
+reliable evidence is a real job's stderr:
+
+```bash
+TOKEN=$(cat ~/.patric_token)
+curl -s -H "Authorization: OAuth $TOKEN" \
+  "https://p3.theseed.org/services/app_service/task_info/<task-id>/stderr" \
+  | grep "Container path:"
+# -> Container path: /disks/patric-common/container-cache/folding_YYMMDD.N.sif
+```
+
+Notes that cost time when forgotten:
+
+- `AppService.enumerate_apps` returns a curated ~39-app list that **never**
+  includes PredictStructure. It cannot tell you whether the app is registered.
+- The first submission after a switch takes several minutes (~8 was observed)
+  while a 32 GB SIF stages into the container cache. The test runner allows
+  900 s; a slow first call is not a failure.
+- If `start_app2` returns an empty `"Error submitting job: \n"`, the registered
+  container filename probably does not exist — the scheduler runs preflight
+  *inside* the container, so a missing image produces no error text at all.
 
 ## Step 9: Clean up
 
