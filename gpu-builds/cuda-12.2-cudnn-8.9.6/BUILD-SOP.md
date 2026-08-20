@@ -338,6 +338,51 @@ again against the finished SIF.
 chained verify-and-pack in one command line and packed an image whose env suite
 had failed.
 
+### Step 5b: Acceptance — exercise the SERVICE path, not just the CLI
+
+`test-container-env.sh` proves the image is *assembled* correctly.
+`test-container-acceptance.sh` proves it *behaves* correctly, through the path
+BV-BRC actually uses. This distinction is not academic: an ESMFold2 case passed
+every local CLI check and still died in production, because the Perl passed a
+flag the subcommand did not define.
+
+```bash
+W=/scout/tmp/acceptance-$(date +%y%m%d); mkdir -p $W
+# needs crambin.fasta, other.fasta, crambin.a3m in $W
+EXPECT=<short-commit> ./test-container-acceptance.sh /scout/containers/folding_YYMMDD.N.sif $W
+```
+
+It checks provenance labels against the commit you meant to ship, the #98
+single-install and path-invocation contracts, `auto` never resolving to
+AlphaFold, the service-script preflight (the F01 path), and the behavior of
+whatever shipped in this build. **Extend it each time you ship a fix** — the
+checks are cheap and they are what turns "I believe it works" into evidence.
+
+### Step 5c: One real prediction
+
+Neither suite runs the model. Do one small prediction end to end and render a
+report from it:
+
+```bash
+apptainer exec --nv --bind /local_databases --bind $W:$W \
+  --env CUDA_VISIBLE_DEVICES=<a free GPU> /scout/containers/folding_YYMMDD.N.sif \
+  /bin/bash -lc "cd /tmp && /opt/conda-predict/bin/predict-structure esmfold \
+    --protein $W/crambin.fasta -o $W/e2e --device gpu"
+
+apptainer exec --bind $W:$W /scout/containers/folding_YYMMDD.N.sif /bin/bash -lc \
+  "cd /tmp && /opt/conda-predict/bin/python -m protein_compare characterize \
+    $W/e2e/model_1.pdb -o $W/e2e/report --format all"
+```
+
+> **Pin a free GPU.** On a shared host the default device 0 is often full, and
+> the failure is a bare `RuntimeError: CUDA error: out of memory` at model load
+> that reads like a container defect. Check `nvidia-smi --query-gpu=index,memory.used,memory.total --format=csv,noheader`
+> first.
+
+To decide whether an odd-looking result is a regression, run the **same input
+through the previous production SIF** and compare `predictions/confidence.json`.
+Identical numbers mean the behavior predates your build.
+
 ## Step 6: Stamp BVBRC metadata into the sandbox
 
 Before repacking, stamp `BVBRC.*` labels into `labels.json` so the resulting
