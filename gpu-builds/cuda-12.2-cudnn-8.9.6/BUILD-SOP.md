@@ -144,6 +144,13 @@ pip cache purge
 
 ## Step 4: Install predict-structure CLI
 
+Mirrors `reqts-predict-structure.def` — **that def is the source of truth**; if
+the two disagree, the def wins and this block should be corrected.
+
+Note the two installs: `predict-structure[all]` and `protein_compare`. The
+container needs both — `protein_compare` renders every HTML report, and the
+service script calls it directly (`python -m protein_compare characterize`).
+
 ```bash
 APPTAINER_TMPDIR=/scout/tmp apptainer exec --fakeroot --writable \
     /scout/tmp/all-sandbox /bin/bash -c '
@@ -157,7 +164,8 @@ conda_dir=/opt/conda-predict
 conda create -p $conda_dir --yes --quiet python=3.12
 conda activate $conda_dir
 
-pip install --no-cache-dir "predict-structure[cwl] @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+pip install --no-cache-dir "predict-structure[all] @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+pip install --no-cache-dir "git+https://github.com/wilke/protein_structure_analysis.git"
 
 ln -sf $conda_dir/bin/predict-structure /usr/local/bin/predict-structure
 
@@ -440,6 +448,7 @@ rm -rf /scout/tmp/all-sandbox
 | Boltz-2 | `/opt/conda-boltz` | `/opt/conda-boltz/bin/boltz predict` |
 | Chai-1 | `/opt/conda-chai` | `/opt/conda-chai/bin/chai-lab fold` |
 | ESMFold | `/opt/conda-esmfold` | `/opt/conda-esmfold/bin/esm-fold-hf` |
+| DiffDock | `/opt/conda-diffdock` | (present in the image; not driven by predict-structure) |
 | ESMFold2 | `/opt/conda-esmfold2` | `predict-structure esmfold2 ...` (runner: conda-esmfold2 python executing the runner FILE from the conda-predict install — never `-m`, see #98) |
 | OpenFold 3 | `/opt/conda-openfold` | `/opt/conda-openfold/bin/run_openfold predict` |
 
