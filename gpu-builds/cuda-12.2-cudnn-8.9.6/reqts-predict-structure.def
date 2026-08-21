@@ -13,11 +13,26 @@ From: {{base}}
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
-    # Install predict-structure CLI with all extras (cwl, rocrate, etc.)
-    $conda_dir/bin/pip install --no-cache-dir "predict-structure[all] @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+    # Install predict-structure CLI with all extras (cwl, rocrate, etc.).
+    #
+    # Pinned to a commit, and to the SAME commit that reqts-bvbrc-deploy.def
+    # checks out for the Perl app: both come from PredictStructureApp, and the
+    # documented production failures (#98, #110) are all cases of the Python
+    # package and the Perl app drifting apart. Tracking `main` in two places
+    # cannot express "these must agree"; one build-arg can.
+    #
+    # NOTE: {{...}} defaults live in the %arguments block that
+    # assemble-folding-def.py emits into all-build.def -- merge_singularity_defs.py
+    # silently drops %arguments from input defs, so they cannot live here.
+    # Building this def standalone therefore requires explicit --build-arg.
+    $conda_dir/bin/pip install --no-cache-dir \
+        "predict-structure[all] @ git+{{ps_repo}}@{{ps_commit}}"
 
-    # Install protein_compare — structure analysis/comparison tool
-    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/protein_structure_analysis.git"
+    # Install protein_compare — renders every HTML report. The service script
+    # calls it directly (`python -m protein_compare characterize`), so report
+    # fixes ship through here, not through predict-structure.
+    $conda_dir/bin/pip install --no-cache-dir \
+        "protein_compare @ git+{{pc_repo}}@{{pc_commit}}"
 
     # Symlink into /usr/local/bin for easy access
     ln -sf $conda_dir/bin/predict-structure /usr/local/bin/predict-structure
@@ -29,7 +44,13 @@ From: {{base}}
     # duplicate shadowed every rebuild. Fail the build loudly instead.
     # readlink -f: conda ships a python3.1 -> python3.12 symlink, so a naive
     # glob counts the same install twice.
-    n=$(ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+    # `set +o pipefail`: base-build.def's `set -o pipefail` leaks into every
+    # later stage of the merged %post. With no glob match `ls` exits 2, which
+    # pipefail propagates and `set -e` turns into a silent build abort --
+    # killing the build before this guard can report n=0, the very case it is
+    # here to catch. Contained: command substitution is already a subshell.
+    n=$(set +o pipefail
+        ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
         | xargs -r readlink -f | sort -u | wc -l)
     if [ "$n" -ne 1 ]; then
         echo "FATAL: expected exactly 1 predict_structure install, found $n:" >&2

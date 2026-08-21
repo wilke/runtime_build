@@ -45,6 +45,26 @@ else
     APP_COMMIT="unknown"
 fi
 
+# stabiliNNator: the model code is a pinned git clone, not a pip install, so
+# there is no dist-info to read -- take HEAD from the clone itself.
+git_head() {   # $1 = repo dir; echoes the commit or "unknown"
+    local d="$1" head ref
+    [[ -d "$d/.git" ]] || { echo unknown; return; }
+    head=$(cat "$d/.git/HEAD" 2>/dev/null || echo)
+    if [[ "$head" =~ ^ref:\ (.+)$ ]]; then
+        ref=$(cat "$d/.git/${BASH_REMATCH[1]}" 2>/dev/null) || ref=""
+        # a --depth 1 clone may keep the ref only in packed-refs
+        [[ -n "$ref" ]] || ref=$(awk -v r="${BASH_REMATCH[1]}" \
+            '$2==r{print $1}' "$d/.git/packed-refs" 2>/dev/null)
+        echo "${ref:-unknown}"
+    else
+        echo "${head:-unknown}"
+    fi
+}
+
+STAB_COMMIT=$(git_head "$SANDBOX/opt/stabilinnator")
+STAB_APP_COMMIT=$(git_head "$SANDBOX/build/dev_container/modules/StabiliNNatorApp")
+
 # runtime_build: this repo's commit (script directory's repo)
 RB_COMMIT=$(git -C "$(dirname "$(readlink -f "$0")")" rev-parse HEAD 2>/dev/null || echo "unknown")
 
@@ -61,6 +81,8 @@ echo "  BVBRC.predict_structure_version   = $PS_VERSION"
 echo "  BVBRC.predict_structure_commit    = $PS_COMMIT"
 echo "  BVBRC.protein_compare_commit      = $PC_COMMIT"
 echo "  BVBRC.app_predictstructure_commit = $APP_COMMIT"
+echo "  BVBRC.stabilinnator_commit        = $STAB_COMMIT"
+echo "  BVBRC.app_stabilinnator_commit    = $STAB_APP_COMMIT"
 
 # --- Merge into labels.json ---
 python3 <<PYEOF
@@ -77,6 +99,8 @@ labels.update({
     "BVBRC.predict_structure_commit":    "$PS_COMMIT",
     "BVBRC.protein_compare_commit":      "$PC_COMMIT",
     "BVBRC.app_predictstructure_commit": "$APP_COMMIT",
+    "BVBRC.stabilinnator_commit":        "$STAB_COMMIT",
+    "BVBRC.app_stabilinnator_commit":    "$STAB_APP_COMMIT",
 })
 with open("$LABELS", "w") as f:
     json.dump(labels, f, indent="\t")

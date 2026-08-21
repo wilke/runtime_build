@@ -1,30 +1,164 @@
 # SOP: Building the Folding Container
 
 Standard operating procedure for building the all-in-one protein structure
-prediction container (AlphaFold, Chai, Boltz, ESMFold, predict-structure).
+container: prediction (AlphaFold, Chai, Boltz, ESMFold, ESMFold2, OpenFold),
+the `predict-structure` CLI and its HTML report, and stability prediction
+(stabiliNNator). It serves **two** BV-BRC apps — PredictStructure and
+StabiliNNator.
 
-## Build approaches
+## How this container is built
 
-There are three ways to build this container:
+**One command, from pinned definition files:**
 
-0. **Incremental refresh** ([documented first](#incremental-refresh-the-usual-case)) —
-   the sandbox at `/scout/tmp/all-sandbox` already exists from the last build;
-   update only the code that changed and repack. **This is what almost every
-   rebuild actually is.** Steps 3–4a below use `conda create` and will fail on an
-   existing env, so do not start there for a routine rebuild.
+```bash
+cd gpu-builds/cuda-12.2-cudnn-8.9.6
+./build-folding-container /disks/tmp/folding_YYMMDD.N.sif
+```
 
-1. **Layered build** (Steps 1–9) — extract a base SIF, install tools into a
-   fresh sandbox, repack. Use when adding a tool or starting from a new base.
+That is the whole build. It takes ~60–90 min, needs ~120 GB of scratch, and
+requires no sudo, no sandbox, and no existing SIF.
 
-2. **Full rebuild** from `all-build.def` (documented at the end) — everything
-   from scratch starting at `nvidia/cuda:12.2.0-devel-ubuntu22.04`. Requires the
-   `{{runtime}}` tarball and `{{packages}}` list.
+### What makes it reproducible
 
-All three have been used; the incremental path is the one exercised most.
+| File | Role |
+|---|---|
+| `stages.list` | ordered manifest — **the** source of truth for what is in the image |
+| `assemble-folding-def.py` | generates `all-build.def`; holds every version pin |
+| `all-build.def` | **generated — do not edit by hand** |
+| `build-folding-container` | driver; refuses to build a stale `all-build.def` |
+| `packages-folding.txt` | the 62 OS packages, vendored into this repo |
+
+Both base images are pinned by digest and every application repo by commit
+(as `%arguments` defaults, so a plain build is deterministic while
+`--build-arg ps_commit=<sha>` still works for a one-off). Adding a tool means
+writing a `reqts-<tool>.def` and adding one line to `stages.list`.
+
+**`ps_commit` deliberately pins two things at once.** `PredictStructureApp`
+supplies both the Python package (`reqts-predict-structure.def`) and the Perl
+service script (`reqts-bvbrc-deploy.def`). Every documented production failure
+in this container — #98 and #110 — was those two halves drifting apart, which
+is exactly what two independent `main` trackers cannot prevent and one shared
+build-arg makes impossible.
+
+To bump a version, edit `PINS` in `assemble-folding-def.py`, regenerate, and
+rebuild:
+
+```bash
+./assemble-folding-def.py && git diff all-build.def   # review what moved
+```
+
+> **Do not put `%arguments` in a `reqts-*.def`.** `merge_singularity_defs.py`
+> parses the section but has nowhere to store it, so the defaults are dropped
+> and every `{{placeholder}}` in that file becomes an unresolvable literal at
+> build time. It now warns when this happens. Defaults belong in `PINS`.
+> The consequence is that individual stage defs are fragments: building one
+> standalone requires passing `--build-arg` explicitly.
+
+> **`%environment` blocks now concatenate verbatim — they used to merge.**
+> `merge_singularity_defs.py` previously hoisted every `export VAR=` into a
+> last-wins dict and emitted it once at the bottom of the block; it now just
+> concatenates each stage's `%environment`, in `stages.list` order, unchanged.
+> Two consequences for whoever edits a `reqts-*.def` next:
+> - Conditional exports (`if [[ -d /local_databases/chai ]] ; then export ...
+>   fi`) survive intact. Hoisting the `export` out left the `if` and the `fi`
+>   in place with **nothing between them** — `then` must be followed by a
+>   statement list, so that is a bash syntax error (see "After the build" below
+>   for what it broke in practice). Five stages were affected: chai, boltz,
+>   openfold, esmfold, esmfold2.
+> - Accumulating exports now accumulate correctly. Three stages export
+>   `PATH=<something>:$PATH`; under last-wins only the final one survived,
+>   silently dropping `/opt/conda-predict/bin` and `/opt/miniforge/bin`. In
+>   `stages.list` order the result (verified by simulation) is
+>   `/opt/p3/deployment/bin:/opt/patric-common/runtime/bin:/opt/conda-predict/bin:/opt/conda-alphafold:/opt/hhsuite/bin:/usr/local/cuda/bin:/opt/miniforge/bin:...`,
+>   matching the known-good production image.
+> - Do **not** add a second copy of an accumulating export or loop to a new
+>   def assuming dedup will collapse it — it now runs twice. The
+>   `LD_LIBRARY_PATH` nvidia-glob loop lives in `base-build.def` only, for
+>   exactly this reason.
+
+### Two things about this host
+
+- **The build user needs an `/etc/subuid` + `/etc/subgid` range.** This is a
+  hard prerequisite, and its absence is the single most expensive way to lose an
+  hour here. Without a range, `--fakeroot` cannot map a uid span, apptainer
+  falls back to a root-mapped namespace in which *only* uid 0 exists, and every
+  package whose postinst chowns to a non-root user fails to configure — about
+  **30 of the 62** in `packages-folding.txt` (`fontconfig`, `openssh-client`,
+  `openjdk-11-jre`, `r-base-core`, `redis-server`, `dbus`, …). The build fails
+  far downstream of the real cause with a misleading message. A wrapping
+  `fakeroot` inside `%post` does **not** work around it — `dpkg-statoverride`
+  still fails. `build-folding-container` checks for the range before starting.
+
+  ```bash
+  grep "^$(id -u):" /etc/subuid /etc/subgid   # must return two lines
+  # if not, an admin adds (once):
+  #   echo "$(id -u):4294705152:65536" >> /etc/subuid
+  #   echo "$(id -u):4294705152:65536" >> /etc/subgid
+  ```
+
+- **`00-build-env.def` must stay first in `stages.list`.** It sets
+  `APT::Sandbox::User "root"` before the first `apt-get`, and fails fast if apt
+  is unusable — so an apt problem surfaces as an apt error rather than as an
+  unrelated `locale-gen: command not found` twenty lines downstream in another
+  stage.
+
+### After the build
+
+**Verification is automatic — you do not run it by hand.**
+`build-folding-container` runs Step 5's `./test-container-env.sh` on the
+finished SIF itself, immediately after `apptainer build`, and exits non-zero
+**without printing success** if any check fails. This exists because a merger
+bug once produced a `%environment` with an empty `if ... fi` (a bash syntax
+error). Apptainer parses `%environment` as a whole, so the image came up with
+**no** `PATH`/`KB_TOP`/`PERL5LIB` and every job would have died at startup —
+yet `apptainer build` still exited 0 after 90 minutes. The harness now catches
+it in seconds.
+
+The remaining steps below are **not** deprecated — they apply to a def-built
+SIF unchanged:
+
+1. [Step 5](#step-5-verify-the-container) — already ran automatically above;
+   re-run by hand only to check a SIF built some other way, e.g. directly from
+   `all-build.def` (see "Full rebuild from all-build.def")
+2. [Step 5b](#step-5b-acceptance--exercise-the-service-path-not-just-the-cli) — acceptance, the service path
+3. [Step 5c](#step-5c-one-real-prediction) — one real prediction on a free GPU
+4. [Step 8](#step-8-deploy) — deploy and promote
+
+Skip Step 6 (stamp) and Step 7 (repack): there is no sandbox to stamp or repack.
+`assemble-folding-def.py` writes the `BVBRC.*` provenance labels straight into
+the generated def, so a def build carries them without a stamping step:
+
+```bash
+apptainer inspect <sif> | grep BVBRC
+#   BVBRC.base_cuda                   nvidia/cuda@sha256:c4e8...
+#   BVBRC.predict_structure_commit    b3f8bfc...
+#   BVBRC.app_stabilinnator_commit    dd80c40...
+#   BVBRC.stabilinnator_commit        28f0fc9...
+apptainer inspect --deffile <sif>     # the exact def it was built from
+```
+
+The labels carry no build date or hostname on purpose — those would make the
+generated file differ on every run and defeat `--check`.
 
 ---
 
-## Incremental refresh (the usual case)
+## The old sandbox path (deprecated)
+
+Everything below documents the previous workflow: extract a SIF to
+`/scout/tmp/all-sandbox`, mutate it with `apptainer exec --writable`, repack.
+**Do not use it for new work.** It is kept because images through
+`folding_260820.1.sif` were built this way, so it explains how they came to be.
+
+It was abandoned because it was not reproducible, and the drift was real rather
+than theoretical: the committed `all-build.def` built **6** conda envs while the
+shipped image had **8** — `esmfold` and `esmfold2` existed only as hand-applied
+sandbox edits that no file in this repo described. Nothing was version-pinned,
+and `reqts-bvbrc-service.def` wrapped every deploy step in `|| true` with stderr
+discarded, so a failed deploy still produced an image that looked healthy.
+
+---
+
+## Incremental refresh (deprecated — sandbox path)
 
 The sandbox persists between builds. A routine rebuild is: update the Python
 packages, redeploy the Perl app + app specs, verify, stamp, repack.
@@ -311,6 +445,211 @@ too (see Step 5), so a mismatch fails the build gate rather than shipping.
 > PR #70), reinstall `protein_compare` from `wilke/protein_structure_analysis` in
 > Step 4 so the app and report stay in lock-step.
 
+## Step 4c: stabiliNNator (tool env)
+
+> **In a def build this is automatic** — `reqts-stabilinnator.def` is in
+> `stages.list` and needs no action. The commands below are the deprecated
+> sandbox equivalent. **The knowledge in this section is not deprecated**: the
+> three-repo distinction and the three failure modes apply either way, and the
+> def encodes exactly what is described here.
+
+Three repos are involved and confusing them wastes an afternoon:
+
+| Repo | Role |
+|---|---|
+| `schoederlab/stabiliNNator` | the model code **and** the committed `.pt` checkpoints — pinned at `28f0fc9` |
+| `CEPI-dxkb/stabiliNNatorApp` | the BV-BRC wrapper: `app_specs`, `App-StabiliNNator.pl`, the HTML report, `convert_checkpoint.py` — deployed in Step 4d |
+| `jakobriccabona/stabiliNNator` | referenced by the app repo's README and CWL, **not** what is built. Do not "correct" the URL to this. |
+
+```bash
+APPTAINER_TMPDIR=/scout/tmp apptainer exec --fakeroot --writable \
+    /scout/tmp/all-sandbox /bin/bash -c '
+set -e
+export DEBIAN_FRONTEND=noninteractive
+export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
+
+conda_dir=/opt/conda-stabilinnator
+. /opt/miniforge/etc/profile.d/conda.sh
+
+# python 3.11 is mandatory: torch 2.1.0 publishes no cp312 wheels.
+conda create -p $conda_dir --yes --quiet python=3.11 pip
+conda activate $conda_dir
+
+$conda_dir/bin/pip install --no-cache-dir torch==2.1.0 torchvision==0.16.0 \
+    torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
+$conda_dir/bin/pip install --no-cache-dir "numpy>=1.24.0,<2.0.0"
+for pkg in torch-scatter torch-sparse torch-cluster torch-spline-conv; do
+    $conda_dir/bin/pip install --no-cache-dir "$pkg" \
+        -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
+done
+$conda_dir/bin/pip install --no-cache-dir torch-geometric==2.4.0 \
+    "biopython>=1.81" "matplotlib>=3.7.0" "scikit-learn>=1.2.0"
+
+rm -rf /opt/stabilinnator
+git clone https://github.com/schoederlab/stabiliNNator.git /opt/stabilinnator
+git -C /opt/stabilinnator checkout 28f0fc99b12be333d7143bd560f9279ce1374caa
+
+conda clean --all --force-pkgs-dirs --yes
+$conda_dir/bin/pip cache purge
+'
+```
+
+### The three things that are easy to get wrong
+
+**1. The CUDA suffix appears twice.** Upstream builds cu118 on a CUDA 11.8 base;
+this image is CUDA 12.2, so we take cu121. The torch `--index-url` **and** the
+`data.pyg.org` wheel index must carry the same suffix. Mix them and pip happily
+installs a cu121 torch beside cu118 extensions — which imports fine at build
+time and dies at predict time.
+
+**2. Only the proline checkpoint gets converted.** The two models are different
+architectures, and one shared assertion over both is wrong:
+
+| Checkpoint | Arch | Ships as | Conversion |
+|---|---|---|---|
+| `proline_gat.pt` | GATConv | `gat.lin.weight` (pre-2.4) | **required** → `lin_src`/`lin_dst` |
+| `cys_gat.pt` | GATv2Conv | `gat.lin_l/lin_r` + `lin_edge` | none — already current, converter copies it through |
+
+```bash
+curl -fsSL -o /tmp/convert_checkpoint.py \
+  https://raw.githubusercontent.com/CEPI-dxkb/stabiliNNatorApp/dd80c40/container/convert_checkpoint.py
+for m in proliNNator/models/proline_gat disulfiNNate/models/cys_gat; do
+    /opt/conda-stabilinnator/bin/python /tmp/convert_checkpoint.py \
+        /opt/stabilinnator/$m.pt /opt/stabilinnator/$m.converted.pt
+    mv /opt/stabilinnator/$m.converted.pt /opt/stabilinnator/$m.pt
+done
+```
+
+Skip the proline conversion and the model does not load at all under
+torch-geometric 2.4 — a hard failure at predict time, not a silent one.
+
+**3. `--hidden-dim 32` is not optional.** The checkpoints were trained at 32
+while the scripts default to 128. The `/usr/local/bin` wrappers inject it (and
+the model path) when absent; see the def for their exact content. Those wrappers
+hardcode `/opt/conda-stabilinnator/bin/python` rather than calling bare
+`python` — in this image bare `python` is conda-predict's 3.12, which has no
+torch and no PyG.
+
+> **Do not put `/opt/conda-stabilinnator/bin` on the global PATH.** It would
+> shadow conda-predict's interpreter for every other tool in the image. The
+> wrappers name the interpreter explicitly; Step 4d handles the service path.
+
+**Incremental refresh:** to update only the model code, skip `conda create` and
+re-clone `/opt/stabilinnator` (then re-run the conversion — a fresh clone
+restores the unconverted checkpoints).
+
+## Step 4d: The StabiliNNator BV-BRC app
+
+> **In a def build this is automatic** — `reqts-bvbrc-deploy.def` deploys both
+> apps. The commands below are the deprecated sandbox equivalent; the
+> explanation of *why* the wrapper exists applies to both paths.
+
+This container now serves **two** BV-BRC apps. StabiliNNator's deploy differs
+from PredictStructure's in one important way, and it is the whole reason this
+step exists as prose rather than a copy of Step 4b.
+
+`App-StabiliNNator.pl` shells out with a bare `system("python", ...)` at three
+call sites (the two model scripts and `generate_report.py`) and offers **no**
+environment override for the interpreter — `STABILINNATOR_DIR`,
+`PROLINNATOR_MODEL`, `DISULFINNATE_MODEL` and `STABILINNATOR_MODULE_DIR` are
+overridable, the Python binary is not. In its own single-tool image bare
+`python` is the only Python. Here it is conda-predict's 3.12.
+
+Rather than patch upstream Perl, the **deploy wrapper** supplies the
+environment. This keeps the checkout byte-identical to `main`:
+
+```bash
+SB=/scout/tmp/all-sandbox
+
+# clean checkout of the wrapper repo
+if [ -d /scout/tmp/stab-main/.git ]; then
+    git -C /scout/tmp/stab-main fetch -q origin main
+    git -C /scout/tmp/stab-main reset -q --hard origin/main
+else
+    git clone -q --depth 1 https://github.com/CEPI-dxkb/stabiliNNatorApp.git \
+        /scout/tmp/stab-main
+fi
+
+# 1. the service script
+cp /scout/tmp/stab-main/service-scripts/App-StabiliNNator.pl \
+   $SB/opt/p3/deployment/plbin/App-StabiliNNator.pl
+chmod +x $SB/opt/p3/deployment/plbin/App-StabiliNNator.pl
+
+# 2. the module tree the report generator needs. It gets its OWN directory:
+#    /kb/module already holds PredictStructure fallback copies, and the two
+#    apps' service-scripts/ and app_specs/ would collide there.
+MOD=$SB/kb/module/StabiliNNatorApp
+mkdir -p $MOD
+cp -r /scout/tmp/stab-main/report      $MOD/          # incl. vendor/3Dmol-min.js
+cp -r /scout/tmp/stab-main/app_specs   $MOD/
+cp -r /scout/tmp/stab-main/service-scripts $MOD/
+
+# 3. the app spec the AppService registry reads (add ONLY this file; the dir
+#    holds other apps' specs)
+cp /scout/tmp/stab-main/app_specs/StabiliNNator.json \
+   $SB/opt/p3/deployment/services/app_service/app_specs/
+
+# 4. the wrapper -- this is what makes bare `python` resolve to the torch env
+cat > $SB/opt/p3/deployment/bin/App-StabiliNNator <<'EOF'
+#!/bin/bash
+export KB_TOP=/opt/p3/deployment
+export KB_RUNTIME=/opt/patric-common/runtime
+export KB_MODULE_DIR=StabiliNNatorApp
+export STABILINNATOR_MODULE_DIR=/kb/module/StabiliNNatorApp
+export STABILINNATOR_DIR=/opt/stabilinnator
+# App-StabiliNNator.pl calls bare `python` via system() and cannot be told
+# otherwise. Put the tool env FIRST so those calls get torch + PyG. Scoped to
+# this wrapper on purpose -- globally it would shadow conda-predict.
+export PATH="/opt/conda-stabilinnator/bin:/opt/patric-common/runtime/bin:/opt/p3/deployment/bin:$PATH"
+export PERL5LIB=/opt/p3/deployment/lib
+exec /opt/patric-common/runtime/bin/perl \
+     /opt/p3/deployment/plbin/App-StabiliNNator.pl "$@"
+EOF
+chmod +x $SB/opt/p3/deployment/bin/App-StabiliNNator
+```
+
+Verify the syntax and the interpreter contract:
+
+```bash
+apptainer exec --bind $SB/opt/p3/deployment/plbin:/mnt /scout/containers/<any>.sif \
+    perl -c /mnt/App-StabiliNNator.pl        # -> syntax OK
+
+apptainer exec /scout/tmp/all-sandbox /bin/bash -c \
+    'PATH=/opt/conda-stabilinnator/bin:$PATH python -c "import torch_geometric"'
+```
+
+`test-container-env.sh` asserts both, plus that the env stays off the global
+PATH (see Step 5).
+
+### Resource expectations
+
+The tool's own docs recommend **CPU**, and the shipped app spec agrees
+(`accelerator=cpu`, `gpu_count: 0`, cpu 2, memory 1G, runtime 120s). The models
+are 14–22 KB; CUDA init costs more than the inference. Measured on CPU: 46 res
+≈ 5 s, 415 res ≈ 5 s, 8,015 res ≈ 8 s (proline) / 19 s (disulfide — it is O(n²)
+over cysteine pairs within 6 Å). Peak RSS ≈ 470 MB.
+
+The env is nonetheless built CUDA-capable so an explicit `--device cuda`
+request still works. If image size ever becomes the binding constraint, a
+CPU-only torch here is the single largest saving available (~3 GB) and matches
+the default execution path.
+
+> **`--device` defaults to `cuda` upstream — pass `--device cpu` for CLI runs
+> without `--nv`.** Both upstream scripts default to CUDA, so a bare
+> `apptainer exec <sif> stabilinnator proline ...` (no `--nv`) fails at model
+> load with:
+>
+> ```
+> RuntimeError: Attempting to deserialize object on a CUDA device but
+> torch.cuda.is_available() is False.
+> ```
+>
+> This does **not** affect BV-BRC jobs: `App-StabiliNNator.pl` probes
+> `torch.cuda.is_available()` and passes `--device` explicitly. It bites
+> interactive CLI use and test harnesses, which is why
+> `test-container-acceptance.sh` section 16 passes `--device cpu` — that is
+> what reproduces the production path, not a workaround.
+
 ## Step 5: Verify the container
 
 Run the automated test suite against the repacked SIF:
@@ -323,14 +662,21 @@ This checks:
 - Shell environment (`90-environment.sh` parses, `KB_TOP`/`PERL5LIB`/`LD_LIBRARY_PATH` set)
 - BV-BRC runtime (`p3x-app-shepherd` on PATH, `App-PredictStructure.pl` exists and passes `perl -c`)
 - Python tools (`predict-structure --version`, `protein_compare` importable)
-- All 8 conda envs exist
+- All 9 conda envs exist
 - ESMFold2 (`esm` importable in `/opt/conda-esmfold2`, runner file runs by path,
   and the tool env has NO `predict_structure` — both directions of the #98 contract)
+- stabiliNNator: torch/PyG import, model code present, **proline checkpoint
+  converted and disulfide checkpoint intact** (asserted separately — they are
+  different architectures), the wrappers pin the tool interpreter, and the env
+  is *not* on the global PATH
+- StabiliNNator app: `App-StabiliNNator.pl` present + `perl -c`, spec deployed,
+  report generator and vendored 3Dmol present, and the wrapper makes bare
+  `python` resolve to the torch env
 - Duplicated copies agree: the Perl app and app spec are byte-identical across
   the deployed, dev_container, and `/kb/module` locations (#110)
 - CUDA availability and `CUDA_HOME`
 
-All **24** checks should pass. The script accepts either a SIF path or a sandbox
+All **41** checks should pass. The script accepts either a SIF path or a sandbox
 directory, so run it against `/scout/tmp/all-sandbox` before repacking — and
 again against the finished SIF.
 
@@ -496,6 +842,25 @@ rm -rf /scout/tmp/all-sandbox
 | DiffDock | `/opt/conda-diffdock` | (present in the image; not driven by predict-structure) |
 | ESMFold2 | `/opt/conda-esmfold2` | `predict-structure esmfold2 ...` (runner: conda-esmfold2 python executing the runner FILE from the conda-predict install — never `-m`, see #98) |
 | OpenFold 3 | `/opt/conda-openfold` | `/opt/conda-openfold/bin/run_openfold predict` |
+| stabiliNNator | `/opt/conda-stabilinnator` | `stabilinnator {proline\|disulfide\|both} --pdb-path X --output-path Y` (wrappers pin the env's python; the env is deliberately off the global PATH) |
+
+### Running the container directly (`apptainer run`)
+
+`assemble-folding-def.py` emits exactly **one** authoritative `%runscript` in
+the merged def and strips the per-stage ones. It didn't always: the merger
+used to concatenate all four stage runscripts, and base-build's `exec "$@"`
+ran first — so `apptainer run <sif> somecmd` worked, but `apptainer run <sif>`
+with **no** arguments made that `exec` a no-op, execution fell through the
+other three runscripts, and the container silently ran AlphaFold
+(`cd /app/alphafold; exec /app/run_alphafold.sh`).
+
+Now a no-arg `apptainer run <sif>` prints a usage message naming the real
+entry points and exits 2:
+
+- `predict-structure <tool> ...`
+- `stabilinnator {proline|disulfide|both} ...`
+- `App-PredictStructure params.json`
+- `App-StabiliNNator params.json`
 
 ## Symlink convention
 
@@ -533,6 +898,13 @@ APPTAINER_TMPDIR=/scout/tmp apptainer build --fakeroot \
     /scout/tmp/folding_YYMMDD.N.sif \
     all-build.def
 ```
+
+> **Run this from `gpu-builds/cuda-12.2-cudnn-8.9.6/`, as shown above.**
+> `all-build.def` declares `%files` with the relative source path
+> `packages-folding.txt`; apptainer resolves that against the build's working
+> directory, not the def file's location. `build-folding-container` always
+> `cd`s there first — a direct `apptainer build ... all-build.def` invocation
+> run from anywhere else will fail to find the packages file.
 
 ### Verify
 

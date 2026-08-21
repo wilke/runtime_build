@@ -1,5 +1,60 @@
+# GENERATED FILE -- do not edit by hand.
+# Regenerate with:  ./assemble-folding-def.py
+# Contents and order are defined by:  stages.list
+#
+# Build with ./build-folding-container, or directly:
+#
+#   APPTAINER_TMPDIR=/disks/tmp apptainer build --fakeroot \
+#       folding_YYMMDD.N.sif all-build.def
+#
+# --fakeroot requires an /etc/subuid + /etc/subgid range for the build uid.
+# Without one, ~30 of the OS packages fail to configure (their postinst chowns
+# to a non-root user, and a root-mapped namespace has only uid 0). The failure
+# appears far from its cause; build-folding-container checks for the range.
+#
+# Everything that can drift is pinned: both base images by digest, and every
+# application repo by commit in %arguments below. Two builds of this file
+# produce the same image. Bump a pin deliberately -- override for a one-off
+# with `--build-arg ps_commit=<sha>`.
+
 Bootstrap: docker
-From: nvidia/cuda:12.2.0-devel-ubuntu22.04
+From: dxkb/dev_container@sha256:36176f5e65dffb280263d7a9869db89f623aa485201bc04f71ce29c37c99c8b8
+Stage: devcontainer
+
+Bootstrap: docker
+From: nvidia/cuda@sha256:c4e81887e4aa9f13b1119337323cba89601319ecb282383b879c4ba50510fd17
+Stage: final
+
+%arguments
+    ps_repo = https://github.com/CEPI-dxkb/PredictStructureApp.git
+    ps_commit = b3f8bfca5a1f31bb3763e802f98d3bb0ff04a44f
+    pc_repo = https://github.com/wilke/protein_structure_analysis.git
+    pc_commit = 7105946fdb3c77047d8fcf37286d42004abf3a45
+    stab_app_repo = https://github.com/CEPI-dxkb/stabiliNNatorApp.git
+    stab_app_commit = dd80c40fd60b4da60baff2d6116dff3c14cb2683
+    shepherd_repo = https://github.com/BV-BRC/p3_app_shepherd.git
+    shepherd_commit = 6c78d7aedab24be01dae35b91296121e3881bc78
+
+# Provenance. `apptainer inspect <sif> | grep BVBRC` reports what went in
+# without needing a separate stamping step.
+%labels
+    BVBRC.base_devcontainer dxkb/dev_container@sha256:36176f5e65dffb280263d7a9869db89f623aa485201bc04f71ce29c37c99c8b8
+    BVBRC.base_cuda nvidia/cuda@sha256:c4e81887e4aa9f13b1119337323cba89601319ecb282383b879c4ba50510fd17
+    BVBRC.predict_structure_commit b3f8bfca5a1f31bb3763e802f98d3bb0ff04a44f
+    BVBRC.protein_compare_commit 7105946fdb3c77047d8fcf37286d42004abf3a45
+    BVBRC.app_predictstructure_commit b3f8bfca5a1f31bb3763e802f98d3bb0ff04a44f
+    BVBRC.app_stabilinnator_commit dd80c40fd60b4da60baff2d6116dff3c14cb2683
+    BVBRC.app_shepherd_commit 6c78d7aedab24be01dae35b91296121e3881bc78
+    BVBRC.stabilinnator_commit 28f0fc99b12be333d7143bd560f9279ce1374caa
+    BVBRC.built_from all-build.def (generated)
+
+# The BV-BRC Perl runtime + build system, copied from the dev_container image.
+# Subdirectories are listed individually: `%files` nests the source under the
+# destination when the destination already exists.
+%files from devcontainer
+    /opt/patric-common/runtime /opt/patric-common/runtime
+    /opt/patric-common/deployment /opt/patric-common/deployment
+    /build/dev_container /build/dev_container
 
 %labels
     Author BV-BRC
@@ -8,38 +63,37 @@ From: nvidia/cuda:12.2.0-devel-ubuntu22.04
     CUDNN-Version 8.9.6
     JAX-Version 0.4.26
     Python-Version 3.11
-    Description Unified protein structure prediction CLI (Boltz-2, Chai-1, AlphaFold2, ESMFold)
+    Description BV-BRC AppService layer (PredictStructure + StabiliNNator)
 
 %files
-{{packages}} /opt/package-list.txt
+    packages-folding.txt /opt/package-list.txt
 
 %environment
+
+# --- From: base-build.def ---
     # Set environment variables for CUDA, cuDNN, and Miniforge
+    export PATH=/usr/local/cuda/bin:/opt/miniforge/bin:$PATH
     # export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+    export CUDNN_VERSION=8.9.6
+
+    # Auto-discover CUDA runtime libs from per-tool conda envs (e.g. Boltz cu13)
+    for d in /opt/conda-*/lib/python*/site-packages/nvidia/*/lib; do
+        [ -d "$d" ] && export LD_LIBRARY_PATH="$d:$LD_LIBRARY_PATH"
+    done
+
+
+# --- From: reqts-alphafold.def ---
     # Core paths
     # LD_LIBRAY_PATH needs /.singularity.d/libs to get the host libraries
     # It has to come before /usr/lib/x86_64-linux-gnu
+    export PATH="/opt/conda-alphafold:/opt/hhsuite/bin:$PATH"
     #    export LD_LIBRARY_PATH="/opt/miniforge/lib:/usr/local/cuda-12.2/lib64:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+    
     # Conda settings
-    # CUDA/JAX settings for optimal performance
-    # Working directory
-if [[ -d /local_databases/chai ]] ; then
-    export CHAI_DOWNLOADS_DIR=/local_databases/chai
-fi
-if [[ -d /local_databases/boltz ]] ; then
-    export BOLTZ_CACHE=/local_databases/boltz
-fi
-if [[ -d /local_databases/esmfold ]] ; then
-    export HF_HOME=/local_databases/esmfold
-fi
-# OpenFold 3 model weights and CCD data (bind-mount from host)
-if [[ -d /local_databases/openfold ]] ; then
-    export OPENFOLD_DATA_DIR=/local_databases/openfold
-fi
-    export PATH=/opt/conda-predict/bin:$PATH
-    export CUDNN_VERSION=8.9.6
     export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
     export PYTHONNOUSERSITE=1
+    
+    # CUDA/JAX settings for optimal performance
     export CUDA_HOME="/usr/local/cuda-12.2"
     export CUDNN_PATH="/usr/lib/x86_64-linux-gnu"
     export XLA_FLAGS="--xla_gpu_cuda_data_dir=/usr/local/cuda-12.2 --xla_gpu_force_compilation_parallelism=1"
@@ -47,22 +101,94 @@ fi
     export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
     export TF_FORCE_GPU_ALLOW_GROWTH=true
     export CUDA_MODULE_LOADING=EAGER
+    
+    # Working directory
     export WORKDIR="/app/alphafold"
+
+
+# --- From: reqts-chai.def ---
+
+if [[ -d /local_databases/chai ]] ; then
     export CHAI_DOWNLOADS_DIR=/local_databases/chai
+fi
 export DISABLE_PANDERA_IMPORT_WARNING=True
+
+
+# --- From: reqts-boltz.def ---
+
+if [[ -d /local_databases/boltz ]] ; then
     export BOLTZ_CACHE=/local_databases/boltz
+fi
+
+
+# --- From: reqts-diffdock.def ---
     export DIFFDOCK_DIR=/opt/diffdock
-    export BVDOC_ESM_MODEL=/opt/esm_models/esm2_t33_650M_UR50D.pt
+    export BVDOCK_DIFFDOCK_DIR=/opt/diffdock
+    export BVDOCK_ESM_MODEL=/opt/esm_models/esm2_t33_650M_UR50D.pt
+    export BVDOCK_CONDA_ENV=/opt/conda-diffdock
+
+
+# --- From: reqts-openfold.def ---
+
+# OpenFold 3 model weights and CCD data (bind-mount from host)
+if [[ -d /local_databases/openfold ]] ; then
     export OPENFOLD_DATA_DIR=/local_databases/openfold
+fi
 
-%setup
 
-# === Setup from: add-runtime.def ===
-mkdir -p ${APPTAINER_ROOTFS}/opt
-tar -C ${APPTAINER_ROOTFS}/opt -x -f {{runtime}} 
+# --- From: reqts-esmfold.def ---
+
+if [[ -d /local_databases/esmfold ]] ; then
+    export HF_HOME=/local_databases/esmfold
+fi
+
+
+# --- From: reqts-predict-structure.def ---
+    export PATH=/opt/conda-predict/bin:$PATH
+
+
+# --- From: reqts-esmfold2.def ---
+
+if [[ -d /local_databases/esmfold2 ]] ; then
+    export HF_HOME=/local_databases/esmfold2
+fi
+
+
+# --- From: reqts-stabilinnator.def ---
+    # Deliberately NOT adding /opt/conda-stabilinnator/bin to PATH. Doing so
+    # would shadow /opt/conda-predict/bin/python for every other tool in the
+    # image. The three /usr/local/bin wrappers hardcode this env's interpreter,
+    # and the App-StabiliNNator wrapper prepends the env for the service path
+    # (SOP Step 4c) — nothing else needs it on PATH.
+    export STABILINNATOR_DIR=/opt/stabilinnator
+    export PROLINNATOR_MODEL=/opt/stabilinnator/proliNNator/models/proline_gat.pt
+    export DISULFINNATE_MODEL=/opt/stabilinnator/disulfiNNate/models/cys_gat.pt
+
+
+# --- From: reqts-bvbrc-deploy.def ---
+    export KB_TOP=/opt/p3/deployment
+    export KB_RUNTIME=/opt/patric-common/runtime
+    export PERL5LIB=/opt/p3/deployment/lib:/opt/p3/deployment/lib/perl5:$PERL5LIB
+    export PATH=/opt/p3/deployment/bin:/opt/patric-common/runtime/bin:$PATH
+    export IN_BVBRC_CONTAINER=1
+
+    # NOTE: the LD_LIBRARY_PATH loop over /opt/conda-*/.../nvidia/*/lib lives in
+    # base-build.def and is NOT repeated here. %environment blocks are now
+    # concatenated verbatim (they used to be deduped by variable name), so a
+    # second copy would run the loop twice and add every directory twice.
 
 
 %post -c /bin/bash
+
+# === Stage from: 00-build-env.def ===
+    set -e
+    echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/00no-sandbox
+
+    # Fail loudly here rather than 20 lines into another stage.
+    apt-get update -qq
+    apt-get install -y --no-install-recommends locales
+    echo "build-env: apt is usable"
+
 
 # === Stage from: base-build.def ===
 
@@ -269,20 +395,20 @@ EOF
     export PYTHONNOUSERSITE=1
     
     # Upgrade pip first
-    pip install --upgrade pip --no-cache-dir
+    $conda_dir/bin/pip install --upgrade pip --no-cache-dir
     
     # Install requirements
-    pip install -r /app/alphafold/requirements.txt --no-cache-dir
+    $conda_dir/bin/pip install -r /app/alphafold/requirements.txt --no-cache-dir
     
     # Install JAX with CUDA 12.2 support (matching Dockerfile)
-    pip install --upgrade --no-cache-dir \
+    $conda_dir/bin/pip install --upgrade --no-cache-dir \
         jax==0.4.26 \
         jaxlib==0.4.26+cuda12.cudnn89 \
         -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
     
     # Clean up to reduce image size
     conda clean --all --force-pkgs-dirs --yes
-    pip cache purge
+    $conda_dir/bin/pip cache purge
     apt-get autoremove --yes
     apt-get clean
     rm -rf /var/lib/apt/lists/*
@@ -298,15 +424,15 @@ EOF
     
     conda_dir=/opt/conda-chai
 
-    conda create -p $conda_dir --yes --quiet  python=3.10 
+    conda create -p $conda_dir --yes --quiet  python=3.10 pip
 
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
     # Install PyTorch with CUDA 12.1 wheels, then Chai with same index
     # --extra-index-url ensures chai-lab resolves torch from cu121 too
-    pip install 'torch>=2.3.1' --index-url https://download.pytorch.org/whl/cu121
-    pip install chai-lab --extra-index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install 'torch>=2.3.1' --index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install chai-lab --extra-index-url https://download.pytorch.org/whl/cu121
 
     #
     # Models are too large for the container. We separately
@@ -333,15 +459,15 @@ EOF
     
     conda_dir=/opt/conda-boltz
 
-    conda create -p $conda_dir --yes --quiet  python=3.11
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
 
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
     # Install PyTorch with CUDA 12.1 wheels, then Boltz with same index
     # --extra-index-url ensures boltz[cuda] resolves torch from cu121 too
-    pip install 'torch>=2.2' --index-url https://download.pytorch.org/whl/cu121
-    pip install boltz[cuda] --extra-index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install 'torch>=2.2' --index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install boltz[cuda] --extra-index-url https://download.pytorch.org/whl/cu121
 
     #
     # Models are too large for the container. We separately
@@ -368,50 +494,50 @@ EOF
 . /opt/miniforge/etc/profile.d/conda.sh
 
     # Create conda environment with Python 3.11
-    conda create -p $conda_dir --yes --quiet python=3.11
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
 
     conda activate $conda_dir
 
     # Ensure setuptools<71 is installed (needed for pkg_resources used by pytorch-lightning)
-    pip install --upgrade pip wheel
-    pip install 'setuptools<71'
+    $conda_dir/bin/pip install --upgrade pip wheel
+    $conda_dir/bin/pip install 'setuptools<71'
 
     # Install conda packages first (openbabel and rdkit work better via conda)
     # Install matplotlib via conda to avoid libstdc++ version mismatch
     conda install --yes --quiet -c conda-forge openbabel rdkit matplotlib
 
     # Install PyTorch 2.1.2 with CUDA 12.1 (H100/H200 compatible)
-    pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 \
+    $conda_dir/bin/pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 \
         --index-url https://download.pytorch.org/whl/cu121
 
     # Install PyTorch Geometric ecosystem
-    pip install torch-geometric==2.4.0
+    $conda_dir/bin/pip install torch-geometric==2.4.0
 
     # Install PyG extensions (pre-compiled for PyTorch 2.1 + CUDA 12.1)
-    pip install torch-scatter torch-sparse torch-cluster torch-spline-conv \
+    $conda_dir/bin/pip install torch-scatter torch-sparse torch-cluster torch-spline-conv \
         -f https://data.pyg.org/whl/torch-2.1.0+cu121.html
 
     # DiffDock core dependencies
-    pip install e3nn==0.5.1 \
+    $conda_dir/bin/pip install e3nn==0.5.1 \
                 pytorch-lightning==2.1.0 \
                 torchmetrics==1.2.0 \
                 fair-esm==1.0.3
 
     # Scientific computing
-    pip install numpy==1.24.3 \
+    $conda_dir/bin/pip install numpy==1.24.3 \
                 scipy==1.11.3 \
                 pandas==2.0.3 \
                 scikit-learn==1.3.2
 
     # Molecular modeling
-    pip install biopython==1.81 \
+    $conda_dir/bin/pip install biopython==1.81 \
                 biopandas==0.4.1 \
                 mdanalysis==2.6.1 \
                 spyrmsd==0.5.2 \
                 prody
 
     # Utilities
-    pip install pyyaml==6.0.1 \
+    $conda_dir/bin/pip install pyyaml==6.0.1 \
                 tqdm==4.66.1 \
                 networkx==3.1 \
                 sympy==1.12 \
@@ -419,16 +545,16 @@ EOF
                 requests==2.31.0
 
     # Configuration and typing
-    pip install pydantic==1.10.13 \
+    $conda_dir/bin/pip install pydantic==1.10.13 \
                 typing-extensions==4.8.0
 
     # Fix libstdc++ issues: pip packages overwrite conda packages with versions
     # compiled against newer libstdc++. Remove pip versions and reinstall via conda.
-    pip uninstall -y matplotlib rdkit rdkit-pypi || true
+    $conda_dir/bin/pip uninstall -y matplotlib rdkit rdkit-pypi || true
     conda install --yes -c conda-forge matplotlib rdkit --force-reinstall
 
     # Verify rdkit installation
-    python -c "from rdkit import Chem; print('rdkit verification: OK')"
+    $conda_dir/bin/python -c "from rdkit import Chem; print('rdkit verification: OK')"
 
     # Set up conda activation scripts for LD_LIBRARY_PATH
     # This ensures conda's libstdc++ (with GLIBCXX_3.4.31+) is used only when env is active
@@ -455,7 +581,7 @@ EOF
     git checkout v1.1
 
     # Pre-generate SO3/torus cache files (avoids slow first-run computation)
-    cd /opt/diffdock && python -c "from utils.so3 import *; from utils.torus import *"
+    cd /opt/diffdock && $conda_dir/bin/python -c "from utils.so3 import *; from utils.torus import *"
 
     # Download DiffDock-L model weights (single zip containing score_model and confidence_model)
     cd /opt/diffdock
@@ -489,23 +615,46 @@ EOF
 
     conda_dir=/opt/conda-openfold
 
-    conda create -p $conda_dir --yes --quiet python=3.11
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
 
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
     # PyTorch 2.5.1 with cu121 (matches OpenFold's Docker image, compatible with CUDA 12.2)
-    pip install 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu121
 
     # Install OpenFold 3
-    pip install --no-cache-dir openfold3 --extra-index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install --no-cache-dir openfold3 --extra-index-url https://download.pytorch.org/whl/cu121
 
     # Symlink into /usr/local/bin
     ln -sf $conda_dir/bin/run_openfold /usr/local/bin/run_openfold
 
     # Clean up
     conda clean --all --force-pkgs-dirs --yes
-    pip cache purge
+    $conda_dir/bin/pip cache purge
+
+
+# === Stage from: reqts-esmfold.def ===
+    # Set non-interactive frontend and auto-accept conda terms
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
+
+    conda_dir=/opt/conda-esmfold
+
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
+
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate $conda_dir
+
+    # Install PyTorch with CUDA
+    $conda_dir/bin/pip install 'torch>=2.6' --index-url https://download.pytorch.org/whl/cu124
+
+    # Install ESMFoldApp (provides esm-fold-hf CLI + torch, transformers, accelerate, biopython)
+    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/ESMFoldApp.git#subdirectory=esm_hf"
+
+    # Clean up
+    conda clean --all --force-pkgs-dirs --yes
+    $conda_dir/bin/pip cache purge
 
 
 # === Stage from: reqts-predict-structure.def ===
@@ -514,42 +663,455 @@ EOF
 
     conda_dir=/opt/conda-predict
 
-    conda create -p $conda_dir --yes --quiet python=3.12
+    conda create -p $conda_dir --yes --quiet python=3.12 pip
 
     . /opt/miniforge/etc/profile.d/conda.sh
     conda activate $conda_dir
 
-    # Install predict-structure CLI (pyarrow, pyyaml etc. are base deps; cwl extra adds cwltool)
-    pip install --no-cache-dir "predict-structure[cwl] @ git+https://github.com/CEPI-dxkb/PredictStructureApp.git"
+    # Install predict-structure CLI with all extras (cwl, rocrate, etc.).
+    #
+    # Pinned to a commit, and to the SAME commit that reqts-bvbrc-deploy.def
+    # checks out for the Perl app: both come from PredictStructureApp, and the
+    # documented production failures (#98, #110) are all cases of the Python
+    # package and the Perl app drifting apart. Tracking `main` in two places
+    # cannot express "these must agree"; one build-arg can.
+    #
+    # NOTE: {{...}} defaults live in the %arguments block that
+    # assemble-folding-def.py emits into all-build.def -- merge_singularity_defs.py
+    # silently drops %arguments from input defs, so they cannot live here.
+    # Building this def standalone therefore requires explicit --build-arg.
+    $conda_dir/bin/pip install --no-cache-dir \
+        "predict-structure[all] @ git+{{ps_repo}}@{{ps_commit}}"
+
+    # Install protein_compare — renders every HTML report. The service script
+    # calls it directly (`python -m protein_compare characterize`), so report
+    # fixes ship through here, not through predict-structure.
+    $conda_dir/bin/pip install --no-cache-dir \
+        "protein_compare @ git+{{pc_repo}}@{{pc_commit}}"
 
     # Symlink into /usr/local/bin for easy access
     ln -sf $conda_dir/bin/predict-structure /usr/local/bin/predict-structure
+    ln -sf $conda_dir/bin/protein_compare /usr/local/bin/protein_compare
+
+    # #98 guard: exactly ONE installation of predict_structure may exist in
+    # the image. A second copy (e.g. in a tool env) is a stale-code hazard —
+    # the esmfold2 runner ran June's code for two months because a forgotten
+    # duplicate shadowed every rebuild. Fail the build loudly instead.
+    # readlink -f: conda ships a python3.1 -> python3.12 symlink, so a naive
+    # glob counts the same install twice.
+    # `set +o pipefail`: base-build.def's `set -o pipefail` leaks into every
+    # later stage of the merged %post. With no glob match `ls` exits 2, which
+    # pipefail propagates and `set -e` turns into a silent build abort --
+    # killing the build before this guard can report n=0, the very case it is
+    # here to catch. Contained: command substitution is already a subshell.
+    n=$(set +o pipefail
+        ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+        | xargs -r readlink -f | sort -u | wc -l)
+    if [ "$n" -ne 1 ]; then
+        echo "FATAL: expected exactly 1 predict_structure install, found $n:" >&2
+        ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+            | xargs -r readlink -f | sort -u >&2
+        exit 1
+    fi
 
     # Clean up
     conda clean --all --force-pkgs-dirs --yes
-    pip cache purge
+    $conda_dir/bin/pip cache purge
 
 
-# === Stage from: add-packages.def ===
+# === Stage from: reqts-esmfold2.def ===
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
 
+    conda_dir=/opt/conda-esmfold2
+
+    # Biohub `esm` requires Python >=3.12,<3.13
+    conda create -p $conda_dir --yes --quiet python=3.12 pip
+
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate $conda_dir
+
+    # PyTorch (default PyPI wheels bundle CUDA runtime + cuDNN — cu130)
+    $conda_dir/bin/pip install --no-cache-dir 'torch>=2.6'
+
+    # Biohub ESMFold2: provides transformers.models.esmfold2 + model weights via HF
+    $conda_dir/bin/pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@main"
+
+    # predict-structure is deliberately NOT installed into this env (#98).
+    # The runner is invoked by file path from the conda-predict installation
+    # ({runner:...} in tools.yml), so a copy here would never be imported —
+    # but its presence is worse than useless: the old -m invocation imported
+    # it, and because rebuilds only refreshed conda-predict, it silently ran
+    # June's code for two months while the labels said otherwise.
+
+    conda clean --all --force-pkgs-dirs --yes
+    $conda_dir/bin/pip cache purge
+
+
+# === Stage from: reqts-stabilinnator.def ===
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
+
+    conda_dir=/opt/conda-stabilinnator
+
+    # Pinned upstream model code (matches stabiliNNatorApp's
+    # container/Dockerfile.stabilinnator ARG STABILINNATOR_VERSION).
+    stabilinnator_commit=28f0fc99b12be333d7143bd560f9279ce1374caa
+    # Pinned wrapper repo, only for convert_checkpoint.py.
+    app_commit=dd80c40fd60b4da60baff2d6116dff3c14cb2683
+
+    # python 3.11 is a HARD constraint, not a preference: torch 2.1.0 publishes
+    # no cp312 wheels, and torch 2.1.0 is itself pinned because torch-scatter /
+    # torch-sparse / torch-cluster / torch-spline-conv are compiled extensions
+    # that must match the torch build exactly.
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
+
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate $conda_dir
+
+    # Upstream builds against cu118 on a CUDA 11.8 base image. This image is
+    # CUDA 12.2, so we take the cu121 build of the same torch version. If you
+    # change the CUDA suffix you MUST change it in BOTH places — the torch
+    # index-url and the PyG wheel index — or pip will silently mix a cu121
+    # torch with cu118 extensions and the import fails at runtime, not here.
+    pyg_index=https://data.pyg.org/whl/torch-2.1.0+cu121.html
+
+    $conda_dir/bin/pip install --no-cache-dir \
+        torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+    # numpy <2 is required by torch 2.1.
+    $conda_dir/bin/pip install --no-cache-dir "numpy>=1.24.0,<2.0.0"
+
+    # One package per pip call, as upstream does. Resolving them together lets
+    # pip try to build from source when a wheel lookup misses, which takes
+    # ~20 minutes and then fails.
+    for pkg in torch-scatter torch-sparse torch-cluster torch-spline-conv; do
+        $conda_dir/bin/pip install --no-cache-dir "$pkg" -f "$pyg_index"
+    done
+
+    # 2.4.0 is pinned: it is the GATConv API that convert_checkpoint.py targets.
+    $conda_dir/bin/pip install --no-cache-dir \
+        torch-geometric==2.4.0 \
+        "biopython>=1.81" "matplotlib>=3.7.0" "scikit-learn>=1.2.0"
+
+    # ---- model code + checkpoints -------------------------------------------
+    rm -rf /opt/stabilinnator
+    git clone https://github.com/schoederlab/stabiliNNator.git /opt/stabilinnator
+    git -C /opt/stabilinnator checkout $stabilinnator_commit
+
+    # Only the PROLINE checkpoint needs converting, and it is worth knowing why
+    # before you touch this. The two models are different architectures:
+    #
+    #   proline_gat.pt  GATConv    ships as gat.lin.weight  (pre-2.4 layout)
+    #                              -> converted to gat.lin_src/gat.lin_dst
+    #   cys_gat.pt      GATv2Conv  ships as gat.lin_l/gat.lin_r + gat.lin_edge
+    #                              -> already current; the converter, which only
+    #                                 rewrites the key 'gat.lin.weight', copies
+    #                                 it through untouched
+    #
+    # Both are run through the converter to keep parity with upstream's
+    # Dockerfile, but do NOT "verify the conversion" with one shared assertion:
+    # cys_gat.pt legitimately has no lin_src/lin_dst and never will.
+    # Without the proline conversion the model does not load at all — a hard
+    # failure at predict time, not a silent accuracy change.
+    curl -fsSL -o /tmp/convert_checkpoint.py \
+        "https://raw.githubusercontent.com/CEPI-dxkb/stabiliNNatorApp/$app_commit/container/convert_checkpoint.py"
+
+    for m in proliNNator/models/proline_gat disulfiNNate/models/cys_gat; do
+        $conda_dir/bin/python /tmp/convert_checkpoint.py \
+            "/opt/stabilinnator/$m.pt" "/opt/stabilinnator/$m.converted.pt"
+        mv "/opt/stabilinnator/$m.converted.pt" "/opt/stabilinnator/$m.pt"
+    done
+    rm -f /tmp/convert_checkpoint.py
+
+    # ---- wrappers ------------------------------------------------------------
+    # Upstream's wrappers call bare `python`. That works in a single-tool image
+    # and is wrong here: this container has eight conda envs and bare `python`
+    # resolves to /opt/conda-predict/bin/python (3.12, no torch, no PyG). Every
+    # wrapper therefore hardcodes this env's interpreter.
+    #
+    # --hidden-dim 32 is not a tuning choice. The checkpoints were trained at
+    # 32 while the scripts default to 128; omitting it loads a mis-shaped model.
+    write_wrapper() {   # $1=name  $2=script  $3=model-env-var  $4=default-model
+        cat > "/usr/local/bin/$1" <<EOF
+#!/bin/bash
+# generated by reqts-stabilinnator.def — do not edit in the image
+model="\${$3:-$4}"
+args=()
+[[ "\$*" != *"--model-path"* ]] && args+=(--model-path "\$model")
+[[ "\$*" != *"--hidden-dim"* ]] && args+=(--hidden-dim 32)
+exec /opt/conda-stabilinnator/bin/python "$2" "\${args[@]}" "\$@"
+EOF
+        chmod +x "/usr/local/bin/$1"
+    }
+
+    write_wrapper prolinnator \
+        /opt/stabilinnator/proliNNator/proliNNator.py \
+        PROLINNATOR_MODEL /opt/stabilinnator/proliNNator/models/proline_gat.pt
+    write_wrapper disulfinnate \
+        /opt/stabilinnator/disulfiNNate/predict_cysteine_probabilities.py \
+        DISULFINNATE_MODEL /opt/stabilinnator/disulfiNNate/models/cys_gat.pt
+
+    cat > /usr/local/bin/stabilinnator <<'EOF'
+#!/bin/bash
+# generated by reqts-stabilinnator.def — do not edit in the image
+case "$1" in
+    proline|prolinnator)     shift; exec prolinnator "$@" ;;
+    disulfide|disulfinnate)  shift; exec disulfinnate "$@" ;;
+    both)                    shift
+                             prolinnator "$@" && disulfinnate "$@" ;;
+    *)  echo "Usage: stabilinnator {proline|disulfide|both} [options]" >&2
+        exit 1 ;;
+esac
+EOF
+    chmod +x /usr/local/bin/stabilinnator
+
+    # ---- guards --------------------------------------------------------------
+    # Same class of bug as #98: a second copy of a package in a tool env that
+    # rebuilds never refresh. Assert what THIS stage is responsible for, in a
+    # way that does not depend on stage order — reqts-predict-structure.def may
+    # run before or after this one, so "exactly 1" is not ours to assert here
+    # (it owns that check). Ours: this env must never acquire its own copy, and
+    # nothing may have created a second one.
+    if [ -d "$conda_dir/lib/python3.11/site-packages/predict_structure" ]; then
+        echo "FATAL: predict_structure installed into $conda_dir (#98 hazard)" >&2
+        exit 1
+    fi
+    # `set +o pipefail` is load-bearing, not tidying. base-build.def sets
+    # `set -o pipefail` and it leaks into every later stage of the merged
+    # %post. When the glob matches nothing, `ls` exits 2, pipefail propagates
+    # it, and `set -e` kills the build BEFORE the message below can print --
+    # i.e. exactly in the n=0 case this guard exists to explain. The
+    # substitution is already a subshell, so scoping it off here is contained.
+    n=$(set +o pipefail
+        ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+        | xargs -r readlink -f | sort -u | wc -l)
+    if [ "$n" -gt 1 ]; then
+        echo "FATAL: $n predict_structure installs, expected at most 1 (#98)" >&2
+        exit 1
+    fi
+
+    # Prove the stack actually imports and the converted checkpoints load, here,
+    # while there is still a build log to read.
+    $conda_dir/bin/python - <<'EOF'
+import torch, torch_geometric, torch_scatter, torch_sparse, torch_cluster
+print("torch", torch.__version__, "PyG", torch_geometric.__version__)
+
+# Per-architecture expectations — see the conversion note above.
+expect = {
+    "/opt/stabilinnator/proliNNator/models/proline_gat.pt": (
+        {"gat.lin_src.weight", "gat.lin_dst.weight"},  # required after convert
+        {"gat.lin.weight"},                            # must be gone
+    ),
+    "/opt/stabilinnator/disulfiNNate/models/cys_gat.pt": (
+        {"gat.lin_l.weight", "gat.lin_r.weight"},      # GATv2Conv, untouched
+        set(),
+    ),
+}
+for path, (need, forbid) in expect.items():
+    keys = set(torch.load(path, map_location="cpu"))
+    missing = need - keys
+    present = forbid & keys
+    if missing or present:
+        raise SystemExit(
+            f"FATAL: {path} has the wrong checkpoint layout; "
+            f"missing={sorted(missing)} unexpected={sorted(present)}")
+    print("ok", path)
+EOF
+
+    conda clean --all --force-pkgs-dirs --yes
+    $conda_dir/bin/pip cache purge
+
+
+# === Stage from: add-packages-vendored.def ===
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update -y
-    apt-get install -y --no-install-recommends \
-	$(cat /opt/package-list.txt)
+    apt-get install -y --no-install-recommends $(cat /opt/package-list.txt)
+    rm -rf /var/lib/apt/lists/*
 
 
-%runscript
-# WARNING: Multiple runscripts merged
-# --- From: base-build.def ---
-    # Default command to run when the container is executed
-    echo "This container includes CUDA 12.2, cuDNN 8.9.6, and Miniforge."
-    exec "$@"
+# === Stage from: reqts-bvbrc-deploy.def ===
+    set -e
+    set -o pipefail
+    export DEBIAN_FRONTEND=noninteractive
 
-# --- From: reqts-alphafold.def ---
-    cd /app/alphafold
-    exec /app/run_alphafold.sh "$@"
+    # build-essential/libboost-all-dev/lsb-release are for p3_app_shepherd
+    # (C++, links system boost + openssl). libboost-all-dev is also pulled in
+    # by add-packages-vendored.def, which runs earlier -- named again here so
+    # this def states its own dependency and does not break if that order
+    # changes. lsb-release is not optional: p3_app_shepherd's Makefile selects
+    # its toolchain with `lsb_release -i -s``lsb_release -r -s`, and with the
+    # binary missing that string is empty, so it falls through to
+    # BUILD_TOOLS=/disks/patric-common/runtime/build-tools -- a path that does
+    # not exist in this image -- instead of /usr.
+    apt-get update && apt-get install -y --no-install-recommends \
+        rsync libssl-dev zlib1g-dev \
+        build-essential libboost-all-dev lsb-release
+    rm -rf /var/lib/apt/lists/*
 
-# --- From: reqts-predict-structure.def ---
-    exec "$@"
+    export RT=/opt/patric-common/runtime
+
+    # The destination is held in DEPLOY, deliberately NOT in KB_TOP.
+    # `. ./user-env.sh` below is dev_container's generated env script and its
+    # very first line is `export KB_TOP=/build/dev_container` -- it has to be,
+    # because the SEED build system resolves Makefile.common from it. Using
+    # KB_TOP for the destination means every path after that line silently
+    # retargets into the dev_container tree, INCLUDING the `perl -c` guard at
+    # the end, which would then happily validate the file it just wrote to the
+    # wrong place. The older reqts-bvbrc-service.def used a separate
+    # KB_DEPLOYMENT for exactly this reason; do not collapse them back.
+    DEPLOY=/opt/p3/deployment
+
+    export PATH=$DEPLOY/bin:$RT/bin:$PATH
+    export PERL5LIB=$DEPLOY/lib:$RT/lib/perl5
+
+    $RT/bin/cpanm --notest \
+        Net::SSLeay IO::Socket::SSL LWP::Protocol::https \
+        REST::Client Class::Accessor Carp::Always File::Slurp
+    rm -rf ~/.cpanm
+
+    # SEED libraries. `make -k` is tolerated (these modules build partially by
+    # design and the deploy only needs lib/), but the clone and the copy are not.
+    cd /build/dev_container/modules
+    git clone --depth 1 https://github.com/TheSEED/seed_core.git
+    git clone --depth 1 https://github.com/TheSEED/seed_gjo.git
+    cd /build/dev_container && . ./user-env.sh
+
+    # user-env.sh redefines KB_TOP, PATH and PERL5LIB. Prove it did not also
+    # disturb the destination -- if this ever trips, everything below would
+    # deploy into the dev_container tree and the build would still exit 0.
+    [ "$DEPLOY" = /opt/p3/deployment ] \
+        || { echo "FATAL: DEPLOY clobbered by user-env.sh: '$DEPLOY'" >&2; exit 1; }
+
+    (cd modules/seed_core && make -k) || echo "seed_core: partial build (expected)"
+    (cd modules/seed_gjo  && make -k) || echo "seed_gjo: partial build (expected)"
+
+    mkdir -p $DEPLOY/lib $DEPLOY/bin $DEPLOY/plbin \
+             $DEPLOY/services/app_service/app_specs/modes
+    for mod in seed_core seed_gjo; do
+        cp -r /build/dev_container/modules/$mod/lib/* $DEPLOY/lib/
+    done
+    # Seed the deployment from the image's prebuilt one.
+    cp -r /opt/patric-common/deployment/lib/* $DEPLOY/lib/
+    cp -r /opt/patric-common/deployment/bin/* $DEPLOY/bin/
+
+    # ---- p3x-app-shepherd ---------------------------------------------------
+    # The job wrapper the BV-BRC scheduler execs; every app backend runs under
+    # it. It is NOT in the prebuilt /opt/patric-common/deployment seeded above,
+    # and it is not one of app_service's Perl p3x-* scripts either -- it is a
+    # C++ program in its own module, BV-BRC/p3_app_shepherd. The old sandbox
+    # image got it from the production base SIF, which had this module already
+    # cloned and built into /build/dev_container/modules; building from
+    # nvidia/cuda + dxkb/dev_container does not, so it has to be built here.
+    #
+    # `deploy-client` is the module's own deploy target: it installs
+    # p3x-preload.so into $DEPLOY/lib and then RELINKS the binary so that
+    # DEPLOY_LIBDIR (compiled in, and the only way the shepherd finds that .so
+    # at run time -- see locate_preload()) points at the real deployment. That
+    # relink is why TARGET must be passed and AUTO_DEPLOY_CONFIG must be set:
+    # without AUTO_DEPLOY_CONFIG the Makefile bakes in $(CURDIR), and the
+    # shepherd would look for p3x-preload.so in the build tree, which is not in
+    # the image. TARGET (the -D) and DEPLOY_TARGET (where files land) are
+    # separate variables in that Makefile; both are needed.
+    #
+    # The module must sit in /build/dev_container/modules -- its Makefile
+    # begins `TOP_DIR = ../..` and includes $(TOP_DIR)/tools/Makefile.common.
+    cd /build/dev_container/modules
+    git clone {{shepherd_repo}} p3_app_shepherd
+    git -C p3_app_shepherd checkout {{shepherd_commit}}
+
+    (cd p3_app_shepherd && \
+     make TARGET=$DEPLOY DEPLOY_TARGET=$DEPLOY AUTO_DEPLOY_CONFIG=1 deploy-client)
+
+    # Prove it: present, runnable, fully linked, and compiled to look for the
+    # .so where the .so actually is. `--help` exits 0 and needs no network.
+    #
+    # No `grep -q` on the right of a pipe here: `set -o pipefail` is in effect,
+    # and a grep that exits early on its first match SIGPIPEs the producer, so
+    # the pipeline reports 141 and the check inverts.
+    test -s $DEPLOY/lib/p3x-preload.so
+    $DEPLOY/bin/p3x-app-shepherd --help > /dev/null
+    if ldd $DEPLOY/bin/p3x-app-shepherd | grep "not found"; then
+        echo "FATAL: p3x-app-shepherd has unresolved libraries" >&2; exit 1
+    fi
+    if ! strings -a $DEPLOY/bin/p3x-app-shepherd \
+         | grep -Fx -- "$DEPLOY/lib" > /dev/null; then
+        echo "FATAL: p3x-app-shepherd DEPLOY_LIBDIR is not $DEPLOY/lib" >&2
+        echo "       (AUTO_DEPLOY_CONFIG/TARGET did not reach the relink)" >&2
+        exit 1
+    fi
+
+    # ---- PredictStructure ---------------------------------------------------
+    cd /build/dev_container/modules
+    git clone {{ps_repo}} PredictStructureApp
+    git -C PredictStructureApp checkout {{ps_commit}}
+
+    PS=/build/dev_container/modules/PredictStructureApp
+    install -m 755 $PS/service-scripts/App-PredictStructure.pl $DEPLOY/plbin/
+    cp $PS/app_specs/PredictStructure.json        $DEPLOY/services/app_service/app_specs/
+    cp $PS/app_specs/PredictStructureFull.spec    $DEPLOY/services/app_service/app_specs/
+    cp $PS/app_specs/PredictStructureMerged.spec  $DEPLOY/services/app_service/app_specs/
+    cp $PS/app_specs/modes/*.json                 $DEPLOY/services/app_service/app_specs/modes/
+
+    cat > $DEPLOY/bin/App-PredictStructure <<'EOF'
+#!/bin/bash
+export KB_TOP=/opt/p3/deployment
+export KB_RUNTIME=/opt/patric-common/runtime
+export KB_MODULE_DIR=PredictStructureApp
+export PATH="/opt/patric-common/runtime/bin:/opt/p3/deployment/bin:$PATH"
+export PERL5LIB=/opt/p3/deployment/lib
+exec /opt/patric-common/runtime/bin/perl \
+     /opt/p3/deployment/plbin/App-PredictStructure.pl "$@"
+EOF
+    chmod +x $DEPLOY/bin/App-PredictStructure
+
+    # #110: the same files also live in /kb/module. Keep them byte-identical --
+    # a stale copy here is invisible until someone reads the wrong one.
+    mkdir -p /kb/module/service-scripts /kb/module/app_specs
+    cp $PS/service-scripts/App-PredictStructure.pl /kb/module/service-scripts/
+    cp $PS/app_specs/PredictStructure.json         /kb/module/app_specs/
+
+    # ---- StabiliNNator ------------------------------------------------------
+    cd /build/dev_container/modules
+    git clone {{stab_app_repo}} StabiliNNatorApp
+    git -C StabiliNNatorApp checkout {{stab_app_commit}}
+
+    SA=/build/dev_container/modules/StabiliNNatorApp
+    install -m 755 $SA/service-scripts/App-StabiliNNator.pl $DEPLOY/plbin/
+    cp $SA/app_specs/StabiliNNator.json $DEPLOY/services/app_service/app_specs/
+
+    # Its own module dir: /kb/module already holds PredictStructure's copies and
+    # the two apps' service-scripts/ and app_specs/ would collide there.
+    mkdir -p /kb/module/StabiliNNatorApp
+    cp -r $SA/report $SA/app_specs $SA/service-scripts /kb/module/StabiliNNatorApp/
+    test -s /kb/module/StabiliNNatorApp/report/vendor/3Dmol-min.js
+
+    # App-StabiliNNator.pl calls bare `python` via system() at three sites and
+    # has no interpreter override. In this image bare `python` is
+    # conda-predict's 3.12 (no torch, no PyG), so the wrapper -- not a patch to
+    # upstream Perl -- puts the tool env first. Scoped here on purpose: on the
+    # global PATH it would shadow conda-predict for every other tool.
+    cat > $DEPLOY/bin/App-StabiliNNator <<'EOF'
+#!/bin/bash
+export KB_TOP=/opt/p3/deployment
+export KB_RUNTIME=/opt/patric-common/runtime
+export KB_MODULE_DIR=StabiliNNatorApp
+export STABILINNATOR_MODULE_DIR=/kb/module/StabiliNNatorApp
+export STABILINNATOR_DIR=/opt/stabilinnator
+export PATH="/opt/conda-stabilinnator/bin:/opt/patric-common/runtime/bin:/opt/p3/deployment/bin:$PATH"
+export PERL5LIB=/opt/p3/deployment/lib
+exec /opt/patric-common/runtime/bin/perl \
+     /opt/p3/deployment/plbin/App-StabiliNNator.pl "$@"
+EOF
+    chmod +x $DEPLOY/bin/App-StabiliNNator
+
+    # ---- prove both apps parse before the image is sealed -------------------
+    for app in App-PredictStructure App-StabiliNNator; do
+        $RT/bin/perl -c $DEPLOY/plbin/$app.pl
+    done
 
 
 %help
@@ -586,4 +1148,20 @@ EOF
     - Ensure databases are downloaded to data_dir
     - Output includes PDB files, confidence metrics, and MSAs
     - H100 GPUs: Use --use_gpu_relax=false due to OpenMM compatibility
+
+%runscript
+    if [ "$#" -eq 0 ]; then
+        cat >&2 <<'USAGE'
+BV-BRC folding container. Run a command explicitly, e.g.
+
+  predict-structure <tool> --protein in.fasta -o out/
+  stabilinnator {proline|disulfide|both} --pdb-path in.pdb --output-path out.pdb
+  App-PredictStructure params.json
+  App-StabiliNNator   params.json
+
+Tool environments live in /opt/conda-*; see `apptainer inspect <sif>`.
+USAGE
+        exit 2
+    fi
+    exec "$@"
 

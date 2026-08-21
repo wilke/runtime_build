@@ -1,0 +1,24 @@
+
+Bootstrap: localimage
+From: {{base}}
+
+# OS bioinformatics packages for the folding container.
+#
+# Differs from ../add-packages.def in exactly one way: the list is
+# `packages-folding.txt` in THIS repo rather than a {{packages}} build-arg
+# pointing at /home/olson/BV-BRC/runtime_build/gpu-builds/packages-137-12.txt.
+# The contents are identical (verified byte-for-byte against the list baked
+# into folding_260820.1); the difference is that a build no longer depends on
+# another user's home directory being readable and unchanged.
+#
+# Bump packages by editing packages-folding.txt.
+
+%files
+    packages-folding.txt /opt/package-list.txt
+
+%post -c /bin/bash
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -y
+    apt-get install -y --no-install-recommends $(cat /opt/package-list.txt)
+    rm -rf /var/lib/apt/lists/*

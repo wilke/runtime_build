@@ -1,0 +1,43 @@
+# Ordered stage manifest for the folding container.
+#
+# This file is the single source of truth for WHAT goes into the image and in
+# WHAT ORDER. `assemble-folding-def.py` reads it to generate all-build.def.
+#
+# Order matters in two places:
+#   - base-build.def must come first (it creates /opt/miniforge, which every
+#     conda stage needs).
+#   - reqts-predict-structure.def must come before reqts-stabilinnator.def and
+#     reqts-esmfold2.def: it owns the "exactly one predict_structure install"
+#     assertion (#98), and asserting that before it is installed fails.
+#
+# Blank lines and #-comments are ignored.
+
+# Makes apt usable in the root-mapped namespace (no /etc/subuid entry on this
+# host). MUST be first -- base-build.def calls apt-get in its opening lines.
+00-build-env.def
+
+base-build.def
+
+# --- structure prediction models ---
+reqts-alphafold.def
+reqts-chai.def
+reqts-boltz.def
+reqts-diffdock.def
+reqts-openfold.def
+reqts-esmfold.def
+
+# --- the CLI + report. Must precede the stages that assert on it. ---
+reqts-predict-structure.def
+
+# --- tools whose runners live in the predict-structure install ---
+reqts-esmfold2.def
+
+# --- stability prediction ---
+reqts-stabilinnator.def
+
+# --- OS bioinformatics packages (list vendored in this repo) ---
+add-packages-vendored.def
+
+# --- BV-BRC AppService layer: deploys BOTH apps (PredictStructure,
+#     StabiliNNator). Last, so it can assert against the finished tool envs. ---
+reqts-bvbrc-deploy.def

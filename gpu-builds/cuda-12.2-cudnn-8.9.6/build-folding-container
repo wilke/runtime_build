@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Build the folding container reproducibly from all-build.def.
+#
+# Usage:  ./build-folding-container <output.sif> [extra apptainer args...]
+#
+# There is no sandbox and nothing is extracted from an existing SIF. Every
+# input is pinned (base images by digest, app repos by commit in %arguments),
+# so two runs of this script produce the same image.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+OUT="${1:?Usage: $0 <output.sif> [apptainer args...]}"; shift || true
+
+# %files in all-build.def names packages-folding.txt by RELATIVE path, so the
+# build must run from the def's directory.
+cd "$HERE"
+
+# all-build.def is generated. Refuse to build a stale one -- otherwise an edit
+# to stages.list or a reqts-*.def silently does not reach the image.
+python3 ./assemble-folding-def.py --check
+
+export APPTAINER_TMPDIR="${APPTAINER_TMPDIR:-/disks/tmp}"
+export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-/disks/tmp/apptainer-cache}"
+mkdir -p "$APPTAINER_TMPDIR" "$APPTAINER_CACHEDIR"
+
+avail=$(df -BG --output=avail "$APPTAINER_TMPDIR" | tail -1 | tr -dc '0-9')
+if [[ "$avail" -lt 120 ]]; then
+    echo "FAIL: only ${avail}G free on $APPTAINER_TMPDIR; need ~120G" >&2
+    exit 1
+fi
+
+# --fakeroot needs an /etc/subuid + /etc/subgid range for this uid. Without one
+# apptainer silently falls back to a root-mapped namespace in which only uid 0
+# exists, and every package whose postinst chowns to a non-root user fails to
+# configure -- about 30 of the 62 in packages-folding.txt (fontconfig,
+# openssh-client, openjdk, r-base-core, redis, dbus...). The build still exits
+# non-zero, but far downstream and with a misleading message, so check up front.
+if ! grep -q "^$(id -u):\|^$(id -un):" /etc/subuid 2>/dev/null ||
+   ! grep -q "^$(id -u):\|^$(id -un):" /etc/subgid 2>/dev/null; then
+    cat >&2 <<EOF
+FAIL: no /etc/subuid or /etc/subgid range for $(id -un) (uid $(id -u)).
+      --fakeroot cannot map a uid range, and ~30 of the OS packages will fail
+      to configure. A host admin must add, once:
+          echo '$(id -u):4294705152:65536' >> /etc/subuid
+          echo '$(id -u):4294705152:65536' >> /etc/subgid
+EOF
+    exit 1
+fi
+
+echo "Building $OUT from all-build.def (~60-90 min)"
+apptainer build --fakeroot "$@" "$OUT" all-build.def
+
+# Verify HERE, before anyone can read "Build complete" as "this image works".
+# A merger bug once emitted a %environment with an empty `if ... fi`, which is
+# a bash syntax error; Apptainer parses that file as a whole, so the image came
+# up with no PATH, KB_TOP or PERL5LIB and every job died at startup -- and the
+# build still exited 0 after 90 minutes. test-container-env.sh catches it in
+# seconds, so there is no reason for it to be a separate manual step.
+echo
+echo "Verifying $OUT ..."
+if ! ./test-container-env.sh "$OUT"; then
+    echo
+    echo "FAIL: the image was built but does not pass verification." >&2
+    echo "      It is at $OUT — inspect it, but do NOT deploy it." >&2
+    exit 1
+fi
+
+echo
+echo "Build complete and verified: $OUT"
+echo "Next: acceptance (Step 5b) and one real prediction (Step 5c):"
+echo "  EXPECT=<short-commit> ./test-container-acceptance.sh $OUT <workdir>"

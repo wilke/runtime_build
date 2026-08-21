@@ -1,0 +1,210 @@
+
+Bootstrap: localimage
+From: {{base}}
+
+# stabiliNNator — GNN protein stability prediction (proliNNator + disulfiNNate).
+#
+# THREE repos are involved; keep them straight:
+#   1. schoederlab/stabiliNNator      the actual model code + the committed .pt
+#                                     checkpoints. Cloned here, pinned.
+#   2. CEPI-dxkb/stabiliNNatorApp     the BV-BRC wrapper: app_specs, the Perl
+#                                     service script, the HTML report, and
+#                                     convert_checkpoint.py. The Perl/app_specs
+#                                     half is deployed in the SOP's Step 4c,
+#                                     not here (it mirrors how the
+#                                     PredictStructure Perl app is handled).
+#   3. jakobriccabona/stabiliNNator   referenced by the app repo's README and
+#                                     CWL. NOT what the Dockerfile builds — do
+#                                     not "fix" the URL below to match it.
+
+%post -c /bin/bash
+    set -e
+    export DEBIAN_FRONTEND=noninteractive
+    export CONDA_PLUGINS_AUTO_ACCEPT_TOS="yes"
+
+    conda_dir=/opt/conda-stabilinnator
+
+    # Pinned upstream model code (matches stabiliNNatorApp's
+    # container/Dockerfile.stabilinnator ARG STABILINNATOR_VERSION).
+    stabilinnator_commit=28f0fc99b12be333d7143bd560f9279ce1374caa
+    # Pinned wrapper repo, only for convert_checkpoint.py.
+    app_commit=dd80c40fd60b4da60baff2d6116dff3c14cb2683
+
+    # python 3.11 is a HARD constraint, not a preference: torch 2.1.0 publishes
+    # no cp312 wheels, and torch 2.1.0 is itself pinned because torch-scatter /
+    # torch-sparse / torch-cluster / torch-spline-conv are compiled extensions
+    # that must match the torch build exactly.
+    conda create -p $conda_dir --yes --quiet python=3.11 pip
+
+    . /opt/miniforge/etc/profile.d/conda.sh
+    conda activate $conda_dir
+
+    # Upstream builds against cu118 on a CUDA 11.8 base image. This image is
+    # CUDA 12.2, so we take the cu121 build of the same torch version. If you
+    # change the CUDA suffix you MUST change it in BOTH places — the torch
+    # index-url and the PyG wheel index — or pip will silently mix a cu121
+    # torch with cu118 extensions and the import fails at runtime, not here.
+    pyg_index=https://data.pyg.org/whl/torch-2.1.0+cu121.html
+
+    $conda_dir/bin/pip install --no-cache-dir \
+        torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 \
+        --index-url https://download.pytorch.org/whl/cu121
+
+    # numpy <2 is required by torch 2.1.
+    $conda_dir/bin/pip install --no-cache-dir "numpy>=1.24.0,<2.0.0"
+
+    # One package per pip call, as upstream does. Resolving them together lets
+    # pip try to build from source when a wheel lookup misses, which takes
+    # ~20 minutes and then fails.
+    for pkg in torch-scatter torch-sparse torch-cluster torch-spline-conv; do
+        $conda_dir/bin/pip install --no-cache-dir "$pkg" -f "$pyg_index"
+    done
+
+    # 2.4.0 is pinned: it is the GATConv API that convert_checkpoint.py targets.
+    $conda_dir/bin/pip install --no-cache-dir \
+        torch-geometric==2.4.0 \
+        "biopython>=1.81" "matplotlib>=3.7.0" "scikit-learn>=1.2.0"
+
+    # ---- model code + checkpoints -------------------------------------------
+    rm -rf /opt/stabilinnator
+    git clone https://github.com/schoederlab/stabiliNNator.git /opt/stabilinnator
+    git -C /opt/stabilinnator checkout $stabilinnator_commit
+
+    # Only the PROLINE checkpoint needs converting, and it is worth knowing why
+    # before you touch this. The two models are different architectures:
+    #
+    #   proline_gat.pt  GATConv    ships as gat.lin.weight  (pre-2.4 layout)
+    #                              -> converted to gat.lin_src/gat.lin_dst
+    #   cys_gat.pt      GATv2Conv  ships as gat.lin_l/gat.lin_r + gat.lin_edge
+    #                              -> already current; the converter, which only
+    #                                 rewrites the key 'gat.lin.weight', copies
+    #                                 it through untouched
+    #
+    # Both are run through the converter to keep parity with upstream's
+    # Dockerfile, but do NOT "verify the conversion" with one shared assertion:
+    # cys_gat.pt legitimately has no lin_src/lin_dst and never will.
+    # Without the proline conversion the model does not load at all — a hard
+    # failure at predict time, not a silent accuracy change.
+    curl -fsSL -o /tmp/convert_checkpoint.py \
+        "https://raw.githubusercontent.com/CEPI-dxkb/stabiliNNatorApp/$app_commit/container/convert_checkpoint.py"
+
+    for m in proliNNator/models/proline_gat disulfiNNate/models/cys_gat; do
+        $conda_dir/bin/python /tmp/convert_checkpoint.py \
+            "/opt/stabilinnator/$m.pt" "/opt/stabilinnator/$m.converted.pt"
+        mv "/opt/stabilinnator/$m.converted.pt" "/opt/stabilinnator/$m.pt"
+    done
+    rm -f /tmp/convert_checkpoint.py
+
+    # ---- wrappers ------------------------------------------------------------
+    # Upstream's wrappers call bare `python`. That works in a single-tool image
+    # and is wrong here: this container has eight conda envs and bare `python`
+    # resolves to /opt/conda-predict/bin/python (3.12, no torch, no PyG). Every
+    # wrapper therefore hardcodes this env's interpreter.
+    #
+    # --hidden-dim 32 is not a tuning choice. The checkpoints were trained at
+    # 32 while the scripts default to 128; omitting it loads a mis-shaped model.
+    write_wrapper() {   # $1=name  $2=script  $3=model-env-var  $4=default-model
+        cat > "/usr/local/bin/$1" <<EOF
+#!/bin/bash
+# generated by reqts-stabilinnator.def — do not edit in the image
+model="\${$3:-$4}"
+args=()
+[[ "\$*" != *"--model-path"* ]] && args+=(--model-path "\$model")
+[[ "\$*" != *"--hidden-dim"* ]] && args+=(--hidden-dim 32)
+exec /opt/conda-stabilinnator/bin/python "$2" "\${args[@]}" "\$@"
+EOF
+        chmod +x "/usr/local/bin/$1"
+    }
+
+    write_wrapper prolinnator \
+        /opt/stabilinnator/proliNNator/proliNNator.py \
+        PROLINNATOR_MODEL /opt/stabilinnator/proliNNator/models/proline_gat.pt
+    write_wrapper disulfinnate \
+        /opt/stabilinnator/disulfiNNate/predict_cysteine_probabilities.py \
+        DISULFINNATE_MODEL /opt/stabilinnator/disulfiNNate/models/cys_gat.pt
+
+    cat > /usr/local/bin/stabilinnator <<'EOF'
+#!/bin/bash
+# generated by reqts-stabilinnator.def — do not edit in the image
+case "$1" in
+    proline|prolinnator)     shift; exec prolinnator "$@" ;;
+    disulfide|disulfinnate)  shift; exec disulfinnate "$@" ;;
+    both)                    shift
+                             prolinnator "$@" && disulfinnate "$@" ;;
+    *)  echo "Usage: stabilinnator {proline|disulfide|both} [options]" >&2
+        exit 1 ;;
+esac
+EOF
+    chmod +x /usr/local/bin/stabilinnator
+
+    # ---- guards --------------------------------------------------------------
+    # Same class of bug as #98: a second copy of a package in a tool env that
+    # rebuilds never refresh. Assert what THIS stage is responsible for, in a
+    # way that does not depend on stage order — reqts-predict-structure.def may
+    # run before or after this one, so "exactly 1" is not ours to assert here
+    # (it owns that check). Ours: this env must never acquire its own copy, and
+    # nothing may have created a second one.
+    if [ -d "$conda_dir/lib/python3.11/site-packages/predict_structure" ]; then
+        echo "FATAL: predict_structure installed into $conda_dir (#98 hazard)" >&2
+        exit 1
+    fi
+    # `set +o pipefail` is load-bearing, not tidying. base-build.def sets
+    # `set -o pipefail` and it leaks into every later stage of the merged
+    # %post. When the glob matches nothing, `ls` exits 2, pipefail propagates
+    # it, and `set -e` kills the build BEFORE the message below can print --
+    # i.e. exactly in the n=0 case this guard exists to explain. The
+    # substitution is already a subshell, so scoping it off here is contained.
+    n=$(set +o pipefail
+        ls -d /opt/conda-*/lib/python3.*/site-packages/predict_structure 2>/dev/null \
+        | xargs -r readlink -f | sort -u | wc -l)
+    if [ "$n" -gt 1 ]; then
+        echo "FATAL: $n predict_structure installs, expected at most 1 (#98)" >&2
+        exit 1
+    fi
+
+    # Prove the stack actually imports and the converted checkpoints load, here,
+    # while there is still a build log to read.
+    $conda_dir/bin/python - <<'EOF'
+import torch, torch_geometric, torch_scatter, torch_sparse, torch_cluster
+print("torch", torch.__version__, "PyG", torch_geometric.__version__)
+
+# Per-architecture expectations — see the conversion note above.
+expect = {
+    "/opt/stabilinnator/proliNNator/models/proline_gat.pt": (
+        {"gat.lin_src.weight", "gat.lin_dst.weight"},  # required after convert
+        {"gat.lin.weight"},                            # must be gone
+    ),
+    "/opt/stabilinnator/disulfiNNate/models/cys_gat.pt": (
+        {"gat.lin_l.weight", "gat.lin_r.weight"},      # GATv2Conv, untouched
+        set(),
+    ),
+}
+for path, (need, forbid) in expect.items():
+    keys = set(torch.load(path, map_location="cpu"))
+    missing = need - keys
+    present = forbid & keys
+    if missing or present:
+        raise SystemExit(
+            f"FATAL: {path} has the wrong checkpoint layout; "
+            f"missing={sorted(missing)} unexpected={sorted(present)}")
+    print("ok", path)
+EOF
+
+    conda clean --all --force-pkgs-dirs --yes
+    $conda_dir/bin/pip cache purge
+
+%environment
+    # Deliberately NOT adding /opt/conda-stabilinnator/bin to PATH. Doing so
+    # would shadow /opt/conda-predict/bin/python for every other tool in the
+    # image. The three /usr/local/bin wrappers hardcode this env's interpreter,
+    # and the App-StabiliNNator wrapper prepends the env for the service path
+    # (SOP Step 4c) — nothing else needs it on PATH.
+    export STABILINNATOR_DIR=/opt/stabilinnator
+    export PROLINNATOR_MODEL=/opt/stabilinnator/proliNNator/models/proline_gat.pt
+    export DISULFINNATE_MODEL=/opt/stabilinnator/disulfiNNate/models/cys_gat.pt
+
+%runscript
+    exec "$@"
+
+%labels
+    Description stabiliNNator GNN stability prediction (proliNNator + disulfiNNate)

@@ -3,8 +3,13 @@
 # Exercises the SERVICE-SCRIPT path, not just the CLI — F01 passed every local
 # CLI check and still died in production because App-PredictStructure.pl added
 # a flag the subcommand did not define.
-SIF="$1"; WORK="$2"
-pass=0; fail=0
+SIF="${1:?Usage: EXPECT=<short-commit> $0 <sif> <workdir>}"
+WORK="${2:?Usage: EXPECT=<short-commit> $0 <sif> <workdir>}"
+# An empty WORK makes every `--bind ":"` fail, and an unset EXPECT compares
+# every commit against "" -- both produce a wall of confusing failures.
+[ -d "$WORK" ] || { echo "FAIL: workdir not found: $WORK" >&2; exit 1; }
+[ -n "${EXPECT:-}" ] || { echo "FAIL: set EXPECT=<short-commit> (the commit you meant to ship)" >&2; exit 1; }
+pass=0; fail=0; skip=0
 ok()   { echo "  PASS  $1"; pass=$((pass+1)); }
 bad()  { echo "  FAIL  $1"; echo "        $2"; fail=$((fail+1)); }
 run()  { apptainer exec --bind /local_databases --bind "$WORK:$WORK" "$SIF" "$@" 2>&1; }
@@ -38,11 +43,20 @@ if [ "$uniq_c" = "1" ]; then ok "all copies agree: $(echo $commits | tr '\n' ' '
 else bad "predict_structure copies DISAGREE" "$(echo $commits | tr '\n' ' ') -- see #98"; fi
 
 echo "== 1c. the esmfold2 runner (which runs from its OWN env) has the MSA code =="
-h=$(apptainer exec "$SIF" /opt/conda-esmfold2/bin/python -c "
-import inspect
-from predict_structure.runners import esmfold2 as r
-print('_msa' in inspect.getsource(r._build_inputs))" 2>/dev/null)
-[ "$h" = "True" ] && ok "esmfold2 env runner has _msa" || bad "esmfold2 env runner" "stale copy, _msa absent (#98)"
+# Load the runner BY PATH from the conda-predict install, which is how the
+# esmfold2 command actually invokes it. Importing `predict_structure` from the
+# esmfold2 env would contradict the other half of the #98 contract (that env
+# must NOT contain the package) and so would fail on a correct image.
+h=$(apptainer exec "$SIF" /bin/bash -c '
+  f=$(ls -d /opt/conda-predict/lib/python3.*/site-packages/predict_structure/runners/esmfold2.py \
+      | xargs -r readlink -f | sort -u | head -1)
+  /opt/conda-esmfold2/bin/python -c "
+import importlib.util, inspect
+spec = importlib.util.spec_from_file_location(\"esmfold2_runner\", \"$f\")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+print(\"_msa\" in inspect.getsource(m._build_inputs))"' 2>/dev/null | tail -1)
+[ "$h" = "True" ] && ok "esmfold2 runner (loaded by path) has _msa" \
+  || bad "esmfold2 runner" "_msa absent or runner failed to load: '$h' (#98)"
 
 echo "== 2. baked-in code (no bind-mount shadowing) =="
 out=$(apptainer exec "$SIF" /opt/conda-predict/bin/python -c "
@@ -148,6 +162,81 @@ print(int(\"_mark_zero_count_bins\" in src), int(\"Contents\" in src))
 [ "$r" = "1 1" ] && ok "#79 sliver helper + #80 Contents nav present" \
   || bad "protein_compare report fixes" "markers=$r (want '1 1') -- stale protein_compare?"
 
+echo "== 14. StabiliNNator: the interpreter contract =="
+# App-StabiliNNator.pl calls bare `python` via system() at three sites and has
+# no interpreter override. In this image bare `python` is conda-predict's 3.12,
+# which has no torch and no PyG -- so the ONLY thing standing between a working
+# job and an ImportError is the deploy wrapper's PATH. Assert it end to end,
+# the same way the service will hit it.
+# FIRST, not merely present: appending the tool env still leaves bare `python`
+# resolving to conda-predict, and a plain grep would call that a pass.
+w=/opt/p3/deployment/bin/App-StabiliNNator
+r=$(apptainer exec "$SIF" /bin/bash -c "
+    p=\$(grep -m1 '^export PATH=' $w | cut -d= -f2- | tr -d '\"')
+    case \"\$p\" in /opt/conda-stabilinnator/bin:*) echo yes;; *) echo \"no: \$p\";; esac" 2>&1 | tail -1)
+[ "$r" = "yes" ] && ok "wrapper puts the tool env FIRST on PATH" \
+  || bad "wrapper PATH" "$w does not PREPEND /opt/conda-stabilinnator/bin ($r)"
+
+# The real assertion: resolve `python` exactly as the wrapper leaves it, then
+# import what the model code needs. This is the check that would have caught a
+# wrapper regression before a user did.
+r=$(apptainer exec "$SIF" /bin/bash -c '
+    eval "$(grep "^export PATH=" /opt/p3/deployment/bin/App-StabiliNNator)"
+    python -c "import torch, torch_geometric; print(\"OK\", torch.__version__)"' 2>&1 | tail -1)
+case "$r" in
+  OK*) ok "bare python under the wrapper has torch+PyG ($r)";;
+  *)   bad "bare python under wrapper" "got: $r";;
+esac
+
+echo "== 15. StabiliNNator: checkpoints match their architectures =="
+# proline_gat is GATConv and MUST have been converted to the PyG 2.4 layout;
+# cys_gat is GATv2Conv and must NOT be (it has no lin_src and never will).
+# One shared assertion over both is wrong -- that mistake fails the disulfide
+# model, which is why these are separate.
+r=$(apptainer exec "$SIF" /opt/conda-stabilinnator/bin/python -c "
+import torch
+p=set(torch.load('/opt/stabilinnator/proliNNator/models/proline_gat.pt',map_location='cpu'))
+d=set(torch.load('/opt/stabilinnator/disulfiNNate/models/cys_gat.pt',map_location='cpu'))
+print(int({'gat.lin_src.weight','gat.lin_dst.weight'}<=p and 'gat.lin.weight' not in p),
+      int({'gat.lin_l.weight','gat.lin_r.weight'}<=d))" 2>&1 | tail -1)
+[ "$r" = "1 1" ] && ok "proline converted, disulfide intact" \
+  || bad "checkpoint layout" "markers=$r (want '1 1')"
+
+echo "== 16. StabiliNNator: a real prediction through the wrappers =="
+# The models are 14-22 KB and run on CPU in seconds, so unlike the folding
+# tools this is cheap enough to actually run in acceptance. Uses the test PDB
+# shipped with the app repo; skips (does not fail) if it is not staged.
+# `--device cpu` is deliberate and mirrors production: the app spec ships
+# accelerator=cpu / gpu_count:0, and the tool's own docs recommend CPU (the
+# models are 14-22 KB; CUDA init costs more than the inference).
+#
+# It is also REQUIRED here. The upstream scripts default --device to "cuda", so
+# without this flag torch tries to deserialize the checkpoint onto a CUDA
+# device and dies with "Attempting to deserialize object on a CUDA device but
+# torch.cuda.is_available() is False" whenever the container runs without --nv.
+# The service path never hits that, because App-StabiliNNator.pl probes
+# torch.cuda.is_available() and passes --device explicitly -- so passing it
+# here is what actually reproduces production.
+if [ -s "$WORK/1crn_small.pdb" ]; then
+  r=$(run /bin/bash -c "cd $WORK && stabilinnator proline --pdb-path $WORK/1crn_small.pdb \
+        --output-path $WORK/acc_proline.pdb --device cpu >/dev/null 2>&1; echo rc=\$?" 2>&1 | tail -1)
+  if [ "$r" = "rc=0" ] && [ -s "$WORK/acc_proline.pdb" ]; then
+    # probabilities live in the B-factor column; a file of all-zero B-factors
+    # means the model loaded but predicted nothing useful.
+    nz=$(awk '/^ATOM/{b=substr($0,61,6)+0; if(b>0) n++} END{print n+0}' "$WORK/acc_proline.pdb")
+    [ "$nz" -gt 0 ] && ok "proline prediction wrote $nz non-zero B-factors" \
+      || bad "proline prediction" "output has no non-zero B-factors"
+  else
+    bad "proline prediction" "$r (see $WORK/acc_proline.pdb)"
+  fi
+else
+  # A silent SKIP on the ONLY end-to-end model invocation prints
+  # "RESULT: N passed, 0 failed" while never running a prediction. Count it.
+  echo "  SKIP  proline prediction — 1crn_small.pdb not staged in $WORK"
+  skip=$((skip+1))
+fi
+
 echo
-echo "RESULT: $pass passed, $fail failed"
+echo "RESULT: $pass passed, $fail failed, $skip skipped"
+[ "$skip" = "0" ] || echo "NOTE: $skip check(s) skipped — coverage is incomplete."
 [ "$fail" = "0" ]

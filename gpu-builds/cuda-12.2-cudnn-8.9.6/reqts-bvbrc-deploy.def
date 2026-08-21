@@ -1,0 +1,220 @@
+
+Bootstrap: localimage
+From: {{base}}
+
+# BV-BRC AppService layer: deploys BOTH apps this container serves
+# (PredictStructure and StabiliNNator).
+#
+# This is the single-stage form, meant to be merged into all-build.def by
+# assemble-folding-def.py. It assumes /opt/patric-common and /build/dev_container
+# are already present -- the generated def supplies them with a
+# `%files from devcontainer` block, so there is no `%files from` here.
+#
+# `reqts-bvbrc-service.def` is the older standalone multi-stage version, kept
+# for layering onto an existing SIF. Prefer this one: layering needs
+# `--build-arg base=<32GB sif>`, and that extraction fails under fakeroot.
+#
+# Differences from reqts-bvbrc-service.def, both deliberate:
+#
+#   1. Deploys to /opt/p3/deployment, not /opt/patric-common/deployment.
+#      Production sets KB_TOP=/opt/p3/deployment; deploying elsewhere produced
+#      "AppScript.pm not found" at job start.
+#   2. Does not wrap every step in `|| true`. The old def discarded stderr and
+#      continued past failures, so a broken deploy produced a healthy-looking
+#      image and the breakage surfaced as a failed user job instead of a failed
+#      build.
+
+%post -c /bin/bash
+    set -e
+    set -o pipefail
+    export DEBIAN_FRONTEND=noninteractive
+
+    # build-essential/libboost-all-dev/lsb-release are for p3_app_shepherd
+    # (C++, links system boost + openssl). libboost-all-dev is also pulled in
+    # by add-packages-vendored.def, which runs earlier -- named again here so
+    # this def states its own dependency and does not break if that order
+    # changes. lsb-release is not optional: p3_app_shepherd's Makefile selects
+    # its toolchain with `lsb_release -i -s``lsb_release -r -s`, and with the
+    # binary missing that string is empty, so it falls through to
+    # BUILD_TOOLS=/disks/patric-common/runtime/build-tools -- a path that does
+    # not exist in this image -- instead of /usr.
+    apt-get update && apt-get install -y --no-install-recommends \
+        rsync libssl-dev zlib1g-dev \
+        build-essential libboost-all-dev lsb-release
+    rm -rf /var/lib/apt/lists/*
+
+    export RT=/opt/patric-common/runtime
+
+    # The destination is held in DEPLOY, deliberately NOT in KB_TOP.
+    # `. ./user-env.sh` below is dev_container's generated env script and its
+    # very first line is `export KB_TOP=/build/dev_container` -- it has to be,
+    # because the SEED build system resolves Makefile.common from it. Using
+    # KB_TOP for the destination means every path after that line silently
+    # retargets into the dev_container tree, INCLUDING the `perl -c` guard at
+    # the end, which would then happily validate the file it just wrote to the
+    # wrong place. The older reqts-bvbrc-service.def used a separate
+    # KB_DEPLOYMENT for exactly this reason; do not collapse them back.
+    DEPLOY=/opt/p3/deployment
+
+    export PATH=$DEPLOY/bin:$RT/bin:$PATH
+    export PERL5LIB=$DEPLOY/lib:$RT/lib/perl5
+
+    $RT/bin/cpanm --notest \
+        Net::SSLeay IO::Socket::SSL LWP::Protocol::https \
+        REST::Client Class::Accessor Carp::Always File::Slurp
+    rm -rf ~/.cpanm
+
+    # SEED libraries. `make -k` is tolerated (these modules build partially by
+    # design and the deploy only needs lib/), but the clone and the copy are not.
+    cd /build/dev_container/modules
+    git clone --depth 1 https://github.com/TheSEED/seed_core.git
+    git clone --depth 1 https://github.com/TheSEED/seed_gjo.git
+    cd /build/dev_container && . ./user-env.sh
+
+    # user-env.sh redefines KB_TOP, PATH and PERL5LIB. Prove it did not also
+    # disturb the destination -- if this ever trips, everything below would
+    # deploy into the dev_container tree and the build would still exit 0.
+    [ "$DEPLOY" = /opt/p3/deployment ] \
+        || { echo "FATAL: DEPLOY clobbered by user-env.sh: '$DEPLOY'" >&2; exit 1; }
+
+    (cd modules/seed_core && make -k) || echo "seed_core: partial build (expected)"
+    (cd modules/seed_gjo  && make -k) || echo "seed_gjo: partial build (expected)"
+
+    mkdir -p $DEPLOY/lib $DEPLOY/bin $DEPLOY/plbin \
+             $DEPLOY/services/app_service/app_specs/modes
+    for mod in seed_core seed_gjo; do
+        cp -r /build/dev_container/modules/$mod/lib/* $DEPLOY/lib/
+    done
+    # Seed the deployment from the image's prebuilt one.
+    cp -r /opt/patric-common/deployment/lib/* $DEPLOY/lib/
+    cp -r /opt/patric-common/deployment/bin/* $DEPLOY/bin/
+
+    # ---- p3x-app-shepherd ---------------------------------------------------
+    # The job wrapper the BV-BRC scheduler execs; every app backend runs under
+    # it. It is NOT in the prebuilt /opt/patric-common/deployment seeded above,
+    # and it is not one of app_service's Perl p3x-* scripts either -- it is a
+    # C++ program in its own module, BV-BRC/p3_app_shepherd. The old sandbox
+    # image got it from the production base SIF, which had this module already
+    # cloned and built into /build/dev_container/modules; building from
+    # nvidia/cuda + dxkb/dev_container does not, so it has to be built here.
+    #
+    # `deploy-client` is the module's own deploy target: it installs
+    # p3x-preload.so into $DEPLOY/lib and then RELINKS the binary so that
+    # DEPLOY_LIBDIR (compiled in, and the only way the shepherd finds that .so
+    # at run time -- see locate_preload()) points at the real deployment. That
+    # relink is why TARGET must be passed and AUTO_DEPLOY_CONFIG must be set:
+    # without AUTO_DEPLOY_CONFIG the Makefile bakes in $(CURDIR), and the
+    # shepherd would look for p3x-preload.so in the build tree, which is not in
+    # the image. TARGET (the -D) and DEPLOY_TARGET (where files land) are
+    # separate variables in that Makefile; both are needed.
+    #
+    # The module must sit in /build/dev_container/modules -- its Makefile
+    # begins `TOP_DIR = ../..` and includes $(TOP_DIR)/tools/Makefile.common.
+    cd /build/dev_container/modules
+    git clone {{shepherd_repo}} p3_app_shepherd
+    git -C p3_app_shepherd checkout {{shepherd_commit}}
+
+    (cd p3_app_shepherd && \
+     make TARGET=$DEPLOY DEPLOY_TARGET=$DEPLOY AUTO_DEPLOY_CONFIG=1 deploy-client)
+
+    # Prove it: present, runnable, fully linked, and compiled to look for the
+    # .so where the .so actually is. `--help` exits 0 and needs no network.
+    #
+    # No `grep -q` on the right of a pipe here: `set -o pipefail` is in effect,
+    # and a grep that exits early on its first match SIGPIPEs the producer, so
+    # the pipeline reports 141 and the check inverts.
+    test -s $DEPLOY/lib/p3x-preload.so
+    $DEPLOY/bin/p3x-app-shepherd --help > /dev/null
+    if ldd $DEPLOY/bin/p3x-app-shepherd | grep "not found"; then
+        echo "FATAL: p3x-app-shepherd has unresolved libraries" >&2; exit 1
+    fi
+    if ! strings -a $DEPLOY/bin/p3x-app-shepherd \
+         | grep -Fx -- "$DEPLOY/lib" > /dev/null; then
+        echo "FATAL: p3x-app-shepherd DEPLOY_LIBDIR is not $DEPLOY/lib" >&2
+        echo "       (AUTO_DEPLOY_CONFIG/TARGET did not reach the relink)" >&2
+        exit 1
+    fi
+
+    # ---- PredictStructure ---------------------------------------------------
+    cd /build/dev_container/modules
+    git clone {{ps_repo}} PredictStructureApp
+    git -C PredictStructureApp checkout {{ps_commit}}
+
+    PS=/build/dev_container/modules/PredictStructureApp
+    install -m 755 $PS/service-scripts/App-PredictStructure.pl $DEPLOY/plbin/
+    cp $PS/app_specs/PredictStructure.json        $DEPLOY/services/app_service/app_specs/
+    cp $PS/app_specs/PredictStructureFull.spec    $DEPLOY/services/app_service/app_specs/
+    cp $PS/app_specs/PredictStructureMerged.spec  $DEPLOY/services/app_service/app_specs/
+    cp $PS/app_specs/modes/*.json                 $DEPLOY/services/app_service/app_specs/modes/
+
+    cat > $DEPLOY/bin/App-PredictStructure <<'EOF'
+#!/bin/bash
+export KB_TOP=/opt/p3/deployment
+export KB_RUNTIME=/opt/patric-common/runtime
+export KB_MODULE_DIR=PredictStructureApp
+export PATH="/opt/patric-common/runtime/bin:/opt/p3/deployment/bin:$PATH"
+export PERL5LIB=/opt/p3/deployment/lib
+exec /opt/patric-common/runtime/bin/perl \
+     /opt/p3/deployment/plbin/App-PredictStructure.pl "$@"
+EOF
+    chmod +x $DEPLOY/bin/App-PredictStructure
+
+    # #110: the same files also live in /kb/module. Keep them byte-identical --
+    # a stale copy here is invisible until someone reads the wrong one.
+    mkdir -p /kb/module/service-scripts /kb/module/app_specs
+    cp $PS/service-scripts/App-PredictStructure.pl /kb/module/service-scripts/
+    cp $PS/app_specs/PredictStructure.json         /kb/module/app_specs/
+
+    # ---- StabiliNNator ------------------------------------------------------
+    cd /build/dev_container/modules
+    git clone {{stab_app_repo}} StabiliNNatorApp
+    git -C StabiliNNatorApp checkout {{stab_app_commit}}
+
+    SA=/build/dev_container/modules/StabiliNNatorApp
+    install -m 755 $SA/service-scripts/App-StabiliNNator.pl $DEPLOY/plbin/
+    cp $SA/app_specs/StabiliNNator.json $DEPLOY/services/app_service/app_specs/
+
+    # Its own module dir: /kb/module already holds PredictStructure's copies and
+    # the two apps' service-scripts/ and app_specs/ would collide there.
+    mkdir -p /kb/module/StabiliNNatorApp
+    cp -r $SA/report $SA/app_specs $SA/service-scripts /kb/module/StabiliNNatorApp/
+    test -s /kb/module/StabiliNNatorApp/report/vendor/3Dmol-min.js
+
+    # App-StabiliNNator.pl calls bare `python` via system() at three sites and
+    # has no interpreter override. In this image bare `python` is
+    # conda-predict's 3.12 (no torch, no PyG), so the wrapper -- not a patch to
+    # upstream Perl -- puts the tool env first. Scoped here on purpose: on the
+    # global PATH it would shadow conda-predict for every other tool.
+    cat > $DEPLOY/bin/App-StabiliNNator <<'EOF'
+#!/bin/bash
+export KB_TOP=/opt/p3/deployment
+export KB_RUNTIME=/opt/patric-common/runtime
+export KB_MODULE_DIR=StabiliNNatorApp
+export STABILINNATOR_MODULE_DIR=/kb/module/StabiliNNatorApp
+export STABILINNATOR_DIR=/opt/stabilinnator
+export PATH="/opt/conda-stabilinnator/bin:/opt/patric-common/runtime/bin:/opt/p3/deployment/bin:$PATH"
+export PERL5LIB=/opt/p3/deployment/lib
+exec /opt/patric-common/runtime/bin/perl \
+     /opt/p3/deployment/plbin/App-StabiliNNator.pl "$@"
+EOF
+    chmod +x $DEPLOY/bin/App-StabiliNNator
+
+    # ---- prove both apps parse before the image is sealed -------------------
+    for app in App-PredictStructure App-StabiliNNator; do
+        $RT/bin/perl -c $DEPLOY/plbin/$app.pl
+    done
+
+%environment
+    export KB_TOP=/opt/p3/deployment
+    export KB_RUNTIME=/opt/patric-common/runtime
+    export PERL5LIB=/opt/p3/deployment/lib:/opt/p3/deployment/lib/perl5:$PERL5LIB
+    export PATH=/opt/p3/deployment/bin:/opt/patric-common/runtime/bin:$PATH
+    export IN_BVBRC_CONTAINER=1
+
+    # NOTE: the LD_LIBRARY_PATH loop over /opt/conda-*/.../nvidia/*/lib lives in
+    # base-build.def and is NOT repeated here. %environment blocks are now
+    # concatenated verbatim (they used to be deduped by variable name), so a
+    # second copy would run the loop twice and add every directory twice.
+
+%labels
+    Description BV-BRC AppService layer (PredictStructure + StabiliNNator)

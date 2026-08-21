@@ -224,26 +224,33 @@ class DefMerger:
         if post_flags:
             merged.post.flags = post_flags
 
-        # Merge %environment (deduplicate export statements)
-        env_vars = {}  # var_name -> full_line (last wins)
-        env_other = []  # Non-export lines
+        # Merge %environment by CONCATENATING each file's block verbatim.
+        #
+        # This used to hoist every `export VAR=` into a dict (last wins) and
+        # emit the leftovers first. That was wrong twice over:
+        #
+        #  1. It reordered exports out of the compound statements containing
+        #     them, leaving `if [[ -d /local_databases/chai ]] ; then` directly
+        #     followed by `fi`. That is a bash syntax error, and Apptainer
+        #     parses 90-environment.sh as a whole -- so the ENTIRE environment
+        #     block is discarded at runtime, including the exports that came
+        #     before the error. Images built this way come up with no PATH,
+        #     KB_TOP, PERL5LIB or LD_LIBRARY_PATH and fail at job start.
+        #
+        #  2. Last-wins is wrong for accumulating variables. Three stages here
+        #     export `PATH=<something>:$PATH`; keeping only the last one
+        #     silently drops /opt/conda-predict/bin and /opt/miniforge/bin.
+        #
+        # Concatenating verbatim preserves both the conditionals and the
+        # accumulation order, and duplicate plain assignments are harmless --
+        # the shell already gives last-wins semantics at evaluation time, which
+        # is exactly what the dedup was trying to emulate.
         for df in deffiles:
-            for line in df.environment.lines:
-                stripped = line.strip()
-                # Match export VAR=value or VAR=value
-                export_match = re.match(r"^(export\s+)?(\w+)=(.*)$", stripped)
-                if export_match:
-                    var_name = export_match.group(2)
-                    env_vars[var_name] = line
-                elif stripped and not stripped.startswith("#"):
-                    env_other.append(line)
-                elif stripped.startswith("#"):
-                    env_other.append(line)
-
-        for line in env_other:
-            merged.environment.append(line)
-        for line in env_vars.values():
-            merged.environment.append(line)
+            if df.environment.is_empty():
+                continue
+            if self.add_stage_comments and df.source_path:
+                merged.environment.append(f"\n# --- From: {df.source_path.name} ---")
+            merged.environment.extend(df.environment.lines)
 
         # Merge %labels (deduplicate, last wins)
         labels = {}  # label_name -> value
@@ -390,8 +397,8 @@ Examples:
   %(prog)s base.def app.def runtime.def -o final.def --no-comments
 
 The files are processed in order: Bootstrap/From from the first file is used
-unless overridden. %post sections are concatenated in order. %environment
-and %labels are deduplicated (last value wins for duplicates).
+unless overridden. %%post sections are concatenated in order. %%environment
+and %%labels are deduplicated (last value wins for duplicates).
 """
     )
 
@@ -447,6 +454,15 @@ and %labels are deduplicated (last value wins for duplicates).
         except Exception as e:
             print(f"Error parsing {path}: {e}", file=sys.stderr)
             sys.exit(1)
+
+        # %arguments is recognised by the parser but DefFile has nowhere to put
+        # it, so its contents are dropped. Silently losing build-arg defaults
+        # turns every {{placeholder}} in that file into an unresolvable literal
+        # at build time, a long way from the cause -- so say so.
+        if re.search(r"^\s*%arguments\b", path.read_text(), re.M):
+            print(f"WARNING: {path.name} has an %arguments section; it will NOT "
+                  f"be merged. Supply those defaults in the output def instead.",
+                  file=sys.stderr)
 
     # Merge
     merger = DefMerger(

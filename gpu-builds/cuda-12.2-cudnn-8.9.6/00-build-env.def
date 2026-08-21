@@ -1,0 +1,34 @@
+
+Bootstrap: localimage
+From: {{base}}
+
+# Must be the FIRST stage in stages.list: it makes apt usable, and proves it,
+# before any other stage depends on it.
+#
+# `APT::Sandbox::User "root"` stops apt dropping privileges to its unprivileged
+# `_apt` user before fetching. That drop fails whenever the build namespace does
+# not map a uid for `_apt`:
+#
+#   E: setgroups 65534 failed - setgroups (1: Operation not permitted)
+#   E: Method http has died unexpectedly!
+#
+# Every subsequent apt-get then installs nothing, and the failure surfaces far
+# away as something unrelated -- the first symptom observed was
+# `locale-gen: command not found` in base-build.def, 20 lines downstream.
+#
+# It is safe: the build already runs as (namespaced) root, and this leaves the
+# image with no privilege it did not already have.
+#
+# NOTE: this is necessary but NOT sufficient. Installing the full package set
+# also needs a real /etc/subuid range for the build uid -- see BUILD-SOP.md.
+# Without one, packages whose postinst chowns to a non-root user still fail to
+# configure no matter what this file does.
+
+%post -c /bin/bash
+    set -e
+    echo 'APT::Sandbox::User "root";' > /etc/apt/apt.conf.d/00no-sandbox
+
+    # Fail loudly here rather than 20 lines into another stage.
+    apt-get update -qq
+    apt-get install -y --no-install-recommends locales
+    echo "build-env: apt is usable"
