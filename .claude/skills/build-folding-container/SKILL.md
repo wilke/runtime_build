@@ -23,7 +23,7 @@ All paths below are relative to `gpu-builds/cuda-12.2-cudnn-8.9.6/`.
 | `all-build.def` | **generated — never edit by hand** |
 | `build-folding-container` | the driver: preflights, builds, verifies |
 | `test-container-env.sh` | 41 structural checks; run automatically by the driver |
-| `test-container-acceptance.sh` | 26 behavioural checks through the service path |
+| `test-container-acceptance.sh` | 27 behavioural checks through the service path |
 
 ## 0. Preconditions
 
@@ -83,7 +83,7 @@ W=/scout/tmp/acceptance-$(date +%y%m%d); mkdir -p $W
 EXPECT=<short ps_commit> ./test-container-acceptance.sh <sif> $W
 ```
 
-Expect `26 passed, 0 failed, 0 skipped`. A **skip is not a pass** — section 16
+Expect `27 passed, 0 failed, 0 skipped`. A **skip is not a pass** — section 16
 is the only end-to-end model run and it skips silently if `1crn_small.pdb`
 (from the stabiliNNatorApp repo's `test_data/`) is not staged.
 
