@@ -51,7 +51,7 @@ PINS = {
     # both: every documented production failure here (#98, #110) was those two
     # drifting apart, which two independent `main` trackers cannot prevent.
     "ps_repo":         "https://github.com/CEPI-dxkb/PredictStructureApp.git",
-    "ps_commit":       "b3f8bfca5a1f31bb3763e802f98d3bb0ff04a44f",
+    "ps_commit":       "ef0914b8ca815db19a95520a481760ec980f946e",
     "pc_repo":         "https://github.com/wilke/protein_structure_analysis.git",
     "pc_commit":       "7105946fdb3c77047d8fcf37286d42004abf3a45",
     "stab_app_repo":   "https://github.com/CEPI-dxkb/stabiliNNatorApp.git",
