@@ -236,6 +236,26 @@ else
   skip=$((skip+1))
 fi
 
+echo "== 17. StabiliNNator: THE SERVICE PATH (preflight, not the CLI) =="
+# Sections 14-16 exercise the wrappers and the model. None of them touch the
+# Perl entrypoint the scheduler actually calls -- which is exactly the F01
+# failure mode: every CLI check passed and the job still died because the
+# service path differed. Mirror section 6, for the other app.
+cat > "$WORK/p_stab.json" <<JSON
+{"input_file":"/test/protein.pdb","analysis_type":"both","output_path":"/test/output"}
+JSON
+r=$(apptainer exec --bind "$WORK:$WORK" "$SIF" /bin/bash -lc \
+  "rm -f $WORK/pf_stab.json $WORK/err_stab.txt; perl /opt/p3/deployment/plbin/App-StabiliNNator.pl \
+   --preflight $WORK/pf_stab.json --user-error-file $WORK/err_stab.txt \
+   https://p3.theseed.org/services/app_service \
+   /opt/p3/deployment/services/app_service/app_specs/StabiliNNator.json $WORK/p_stab.json; echo rc=\$?")
+rc=$(echo "$r" | grep -o 'rc=[0-9]*' | tail -1)
+if [ "$rc" = "rc=0" ] && [ -s "$WORK/pf_stab.json" ]; then
+  ok "StabiliNNator service preflight rc=0: $(tr -d '\n ' < "$WORK/pf_stab.json" | head -c 80)"
+else
+  bad "StabiliNNator service preflight" "$rc; err=$(cat "$WORK/err_stab.txt" 2>/dev/null | head -c 200)"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$skip" = "0" ] || echo "NOTE: $skip check(s) skipped — coverage is incomplete."
