@@ -138,6 +138,12 @@ copy to `/vol/patric3/production/containers/`, repoint via
 - **`stabilinnator` defaults to `--device cuda`.** Without `--nv` it dies at
   model load. Pass `--device cpu` for CLI/test runs — that is also what the app
   spec defaults to and what the Perl service passes on a CPU node.
+- **Testing `App-StabiliNNator` by hand throws a harmless save error.** Invoked
+  outside the P3 shepherd against an `output_path` that already exists,
+  AppScript's post-run job-metadata write reports
+  `Cannot overwrite directory .../<output_path>/ on save!`. Exit code is still
+  0 and every app output uploads correctly -- it is an artifact of running
+  outside the scheduler, not a stabiliNNator fault. Don't chase it.
 - **Verify by content, never by version.** `predict-structure` and
   `protein_compare` do not bump versions per commit, so `--version` proves
   nothing. Check the `BVBRC.*` labels (`apptainer inspect <sif> | grep BVBRC`)
