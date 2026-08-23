@@ -54,6 +54,12 @@ Edit `PINS` in `assemble-folding-def.py`, then:
   stage that asserts on it.
 - **Never put `%arguments` in a `reqts-*.def`.** The merger drops it silently
   (it warns now). Defaults belong in `PINS`.
+- **Every `pip install` in a `reqts-*.def` must be pinned** (`pkg==X.Y.Z`, or
+  `git+...@<commit>`). An unpinned `openfold3` picked up 0.5.0 between two
+  builds 22 h apart; its architecture no longer matched the checkpoint and
+  every OpenFold job died in production (260821.2). A reproducible build with
+  a floating install is not reproducible. To bump a tool, change the pin
+  deliberately and re-run the matrix for that tool.
 
 ## 2. Build (self-verifying, ~60–90 min)
 
