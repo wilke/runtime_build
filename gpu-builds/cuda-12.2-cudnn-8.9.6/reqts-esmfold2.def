@@ -18,7 +18,7 @@ From: {{base}}
     $conda_dir/bin/pip install --no-cache-dir 'torch>=2.6'
 
     # Biohub ESMFold2: provides transformers.models.esmfold2 + model weights via HF
-    $conda_dir/bin/pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@main"
+    $conda_dir/bin/pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@1b5207346e24728561e358af917ee3c590df695d"
 
     # predict-structure is deliberately NOT installed into this env (#98).
     # The runner is invoked by file path from the conda-predict installation

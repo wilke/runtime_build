@@ -18,7 +18,7 @@ From: {{base}}
     $conda_dir/bin/pip install 'torch>=2.6' --index-url https://download.pytorch.org/whl/cu124
 
     # Install ESMFoldApp (provides esm-fold-hf CLI + torch, transformers, accelerate, biopython)
-    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/ESMFoldApp.git#subdirectory=esm_hf"
+    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/ESMFoldApp.git@7cae913589790b8fc1125968664137be23ff9666#subdirectory=esm_hf"
 
     # Clean up
     conda clean --all --force-pkgs-dirs --yes

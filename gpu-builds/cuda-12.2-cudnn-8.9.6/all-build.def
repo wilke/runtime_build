@@ -432,7 +432,7 @@ EOF
     # Install PyTorch with CUDA 12.1 wheels, then Chai with same index
     # --extra-index-url ensures chai-lab resolves torch from cu121 too
     $conda_dir/bin/pip install 'torch>=2.3.1' --index-url https://download.pytorch.org/whl/cu121
-    $conda_dir/bin/pip install chai-lab --extra-index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install 'chai-lab==0.6.1' --extra-index-url https://download.pytorch.org/whl/cu121
 
     #
     # Models are too large for the container. We separately
@@ -467,7 +467,7 @@ EOF
     # Install PyTorch with CUDA 12.1 wheels, then Boltz with same index
     # --extra-index-url ensures boltz[cuda] resolves torch from cu121 too
     $conda_dir/bin/pip install 'torch>=2.2' --index-url https://download.pytorch.org/whl/cu121
-    $conda_dir/bin/pip install boltz[cuda] --extra-index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install 'boltz[cuda]==2.2.1' --extra-index-url https://download.pytorch.org/whl/cu121
 
     #
     # Models are too large for the container. We separately
@@ -624,7 +624,7 @@ EOF
     $conda_dir/bin/pip install 'torch==2.5.1' --index-url https://download.pytorch.org/whl/cu121
 
     # Install OpenFold 3
-    $conda_dir/bin/pip install --no-cache-dir openfold3 --extra-index-url https://download.pytorch.org/whl/cu121
+    $conda_dir/bin/pip install --no-cache-dir 'openfold3==0.4.5' --extra-index-url https://download.pytorch.org/whl/cu121
 
     # Symlink into /usr/local/bin
     ln -sf $conda_dir/bin/run_openfold /usr/local/bin/run_openfold
@@ -650,7 +650,7 @@ EOF
     $conda_dir/bin/pip install 'torch>=2.6' --index-url https://download.pytorch.org/whl/cu124
 
     # Install ESMFoldApp (provides esm-fold-hf CLI + torch, transformers, accelerate, biopython)
-    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/ESMFoldApp.git#subdirectory=esm_hf"
+    $conda_dir/bin/pip install --no-cache-dir "git+https://github.com/wilke/ESMFoldApp.git@7cae913589790b8fc1125968664137be23ff9666#subdirectory=esm_hf"
 
     # Clean up
     conda clean --all --force-pkgs-dirs --yes
@@ -735,7 +735,7 @@ EOF
     $conda_dir/bin/pip install --no-cache-dir 'torch>=2.6'
 
     # Biohub ESMFold2: provides transformers.models.esmfold2 + model weights via HF
-    $conda_dir/bin/pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@main"
+    $conda_dir/bin/pip install --no-cache-dir "esm @ git+https://github.com/Biohub/esm.git@1b5207346e24728561e358af917ee3c590df695d"
 
     # predict-structure is deliberately NOT installed into this env (#98).
     # The runner is invoked by file path from the conda-predict installation
