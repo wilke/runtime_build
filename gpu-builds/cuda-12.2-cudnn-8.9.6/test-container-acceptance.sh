@@ -260,9 +260,13 @@ fi
 # partition => 'normal', preflight returned rc=0 with well-formed JSON, the
 # scheduler logged "Submitted" and then silently refused to dispatch -- no
 # task_status dir, no stdout/stderr, just status=failed (tasks 23450684,
-# 23450690). Of 94 deployed BV-BRC apps only AlphaFold and PredictStructure
-# set policy_data at all, and both use gpu2; 'normal' appears nowhere else.
-# So assert the CONTENT of the partition, for BOTH apps.
+# 23450690). So assert the CONTENT of the partition, for BOTH apps.
+#
+# The cluster has exactly two partitions: gpu2 and compute (per wilke,
+# 2026-08-24). GPU work goes to gpu2; CPU-only work goes to compute.
+# Omitting policy_data entirely is also fine -- 91 of 94 deployed BV-BRC
+# apps do that and take the scheduler default. Anything else is a typo that
+# fails silently at dispatch, which is the whole reason for this check.
 check_partition() {
   # $1 = label, $2 = preflight json file
   local label="$1" f="$2"
@@ -275,10 +279,10 @@ pd=d.get('policy_data') or {}
 print(pd.get('partition','<absent>'))
 " "$f" 2>/dev/null)
   case "$part" in
-    gpu2|'<absent>')
+    gpu2|compute|'<absent>')
       ok "$label partition is schedulable ($part)" ;;
     *)
-      bad "$label partition" "requests '$part'; only gpu2 (or no policy_data) is known to dispatch -- 'normal' is silently refused" ;;
+      bad "$label partition" "requests '$part'; the cluster has only gpu2 and compute (or omit policy_data) -- anything else is refused at dispatch with no logs" ;;
   esac
 }
 check_partition "StabiliNNator" "$WORK/pf_stab.json"
