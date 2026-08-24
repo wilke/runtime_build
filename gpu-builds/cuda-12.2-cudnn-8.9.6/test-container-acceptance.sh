@@ -293,16 +293,25 @@ check_partition "PredictStructure" "$WORK/pf.json"
 # scheduler falls back to. Before 353b6cb the spec had NO partition key at
 # all, so a fallback would silently drop the constraint -- the same
 # two-copies-drift shape as #98/#110. Assert the spec agrees with the Perl.
-spec_part=$(run /bin/bash -lc 'python3 -c "
-import json
-d=json.load(open("/opt/p3/deployment/services/app_service/app_specs/StabiliNNator.json"))
-print((d.get("preflight") or {}).get("policy_data",{}).get("partition","<absent>"))
-"' 2>/dev/null | tr -d "\r\n ")
-perl_part=$(python3 -c "
+# Read the spec out and parse it HERE -- nested quoting inside
+# `apptainer exec bash -lc python3 -c "..."` is a reliable way to get a shell
+# error string back and mistake it for data.
+spec_json=$(run cat /opt/p3/deployment/services/app_service/app_specs/StabiliNNator.json 2>/dev/null)
+spec_part=$(printf '%s' "$spec_json" | python3 -c "
 import json,sys
 try:
-    d=json.load(open(sys.argv[1])); print((d.get('policy_data') or {}).get('partition','<absent>'))
-except Exception: print('<none>')
+    d = json.load(sys.stdin)
+    print((d.get('preflight') or {}).get('policy_data', {}).get('partition', '<absent>'))
+except Exception:
+    print('<unreadable>')
+")
+perl_part=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print((d.get('policy_data') or {}).get('partition', '<absent>'))
+except Exception:
+    print('<none>')
 " "$WORK/pf_stab.json" 2>/dev/null)
 if [ "$spec_part" = "$perl_part" ]; then
   ok "StabiliNNator app spec partition agrees with preflight ($spec_part)"
