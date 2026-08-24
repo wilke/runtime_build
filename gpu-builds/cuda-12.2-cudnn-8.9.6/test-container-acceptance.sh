@@ -288,6 +288,28 @@ print(pd.get('partition','<absent>'))
 check_partition "StabiliNNator" "$WORK/pf_stab.json"
 check_partition "PredictStructure" "$WORK/pf.json"
 
+# The partition lives in TWO places for StabiliNNator: the Perl preflight
+# (checked above) and the app spec's static preflight.policy_data, which the
+# scheduler falls back to. Before 353b6cb the spec had NO partition key at
+# all, so a fallback would silently drop the constraint -- the same
+# two-copies-drift shape as #98/#110. Assert the spec agrees with the Perl.
+spec_part=$(run /bin/bash -lc 'python3 -c "
+import json
+d=json.load(open("/opt/p3/deployment/services/app_service/app_specs/StabiliNNator.json"))
+print((d.get("preflight") or {}).get("policy_data",{}).get("partition","<absent>"))
+"' 2>/dev/null | tr -d "\r\n ")
+perl_part=$(python3 -c "
+import json,sys
+try:
+    d=json.load(open(sys.argv[1])); print((d.get('policy_data') or {}).get('partition','<absent>'))
+except Exception: print('<none>')
+" "$WORK/pf_stab.json" 2>/dev/null)
+if [ "$spec_part" = "$perl_part" ]; then
+  ok "StabiliNNator app spec partition agrees with preflight ($spec_part)"
+else
+  bad "StabiliNNator partition copies disagree" "app spec says '$spec_part', Perl preflight emits '$perl_part'"
+fi
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$skip" = "0" ] || echo "NOTE: $skip check(s) skipped — coverage is incomplete."
