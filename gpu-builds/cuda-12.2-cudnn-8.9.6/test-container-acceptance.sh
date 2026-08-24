@@ -256,6 +256,34 @@ else
   bad "StabiliNNator service preflight" "$rc; err=$(cat "$WORK/err_stab.txt" 2>/dev/null | head -c 200)"
 fi
 
+# rc=0 and a non-empty file are NOT enough: StabiliNNator shipped
+# partition => 'normal', preflight returned rc=0 with well-formed JSON, the
+# scheduler logged "Submitted" and then silently refused to dispatch -- no
+# task_status dir, no stdout/stderr, just status=failed (tasks 23450684,
+# 23450690). Of 94 deployed BV-BRC apps only AlphaFold and PredictStructure
+# set policy_data at all, and both use gpu2; 'normal' appears nowhere else.
+# So assert the CONTENT of the partition, for BOTH apps.
+check_partition() {
+  # $1 = label, $2 = preflight json file
+  local label="$1" f="$2"
+  [ -s "$f" ] || { bad "$label partition" "no preflight file to check"; return; }
+  local part
+  part=$(python3 -c "
+import json,sys
+d=json.load(open(sys.argv[1]))
+pd=d.get('policy_data') or {}
+print(pd.get('partition','<absent>'))
+" "$f" 2>/dev/null)
+  case "$part" in
+    gpu2|'<absent>')
+      ok "$label partition is schedulable ($part)" ;;
+    *)
+      bad "$label partition" "requests '$part'; only gpu2 (or no policy_data) is known to dispatch -- 'normal' is silently refused" ;;
+  esac
+}
+check_partition "StabiliNNator" "$WORK/pf_stab.json"
+check_partition "PredictStructure" "$WORK/pf.json"
+
 echo
 echo "RESULT: $pass passed, $fail failed, $skip skipped"
 [ "$skip" = "0" ] || echo "NOTE: $skip check(s) skipped — coverage is incomplete."
