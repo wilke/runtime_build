@@ -31,7 +31,7 @@ Stage: final
     pc_repo = https://github.com/wilke/protein_structure_analysis.git
     pc_commit = 7105946fdb3c77047d8fcf37286d42004abf3a45
     stab_app_repo = https://github.com/CEPI-dxkb/stabiliNNatorApp.git
-    stab_app_commit = 486e037d31b4f9e799473fdeb1fc5eea0118d0cc
+    stab_app_commit = 5ed9b232709f65ebf56bed9dcc11b041699a8553
     shepherd_repo = https://github.com/BV-BRC/p3_app_shepherd.git
     shepherd_commit = 6c78d7aedab24be01dae35b91296121e3881bc78
 
@@ -43,7 +43,7 @@ Stage: final
     BVBRC.predict_structure_commit ef0914b8ca815db19a95520a481760ec980f946e
     BVBRC.protein_compare_commit 7105946fdb3c77047d8fcf37286d42004abf3a45
     BVBRC.app_predictstructure_commit ef0914b8ca815db19a95520a481760ec980f946e
-    BVBRC.app_stabilinnator_commit 486e037d31b4f9e799473fdeb1fc5eea0118d0cc
+    BVBRC.app_stabilinnator_commit 5ed9b232709f65ebf56bed9dcc11b041699a8553
     BVBRC.app_shepherd_commit 6c78d7aedab24be01dae35b91296121e3881bc78
     BVBRC.stabilinnator_commit 28f0fc99b12be333d7143bd560f9279ce1374caa
     BVBRC.built_from all-build.def (generated)

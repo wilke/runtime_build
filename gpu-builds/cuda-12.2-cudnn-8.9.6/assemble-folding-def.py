@@ -55,7 +55,7 @@ PINS = {
     "pc_repo":         "https://github.com/wilke/protein_structure_analysis.git",
     "pc_commit":       "7105946fdb3c77047d8fcf37286d42004abf3a45",
     "stab_app_repo":   "https://github.com/CEPI-dxkb/stabiliNNatorApp.git",
-    "stab_app_commit": "486e037d31b4f9e799473fdeb1fc5eea0118d0cc",
+    "stab_app_commit": "5ed9b232709f65ebf56bed9dcc11b041699a8553",
     # p3x-app-shepherd (reqts-bvbrc-deploy.def). The old sandbox image inherited
     # this already built from the production base SIF; from clean bases it has
     # to be compiled, so the module is pinned like any other source input.
