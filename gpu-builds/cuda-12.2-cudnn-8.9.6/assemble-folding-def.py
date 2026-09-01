@@ -51,11 +51,11 @@ PINS = {
     # both: every documented production failure here (#98, #110) was those two
     # drifting apart, which two independent `main` trackers cannot prevent.
     "ps_repo":         "https://github.com/CEPI-dxkb/PredictStructureApp.git",
-    "ps_commit":       "ef0914b8ca815db19a95520a481760ec980f946e",
+    "ps_commit":       "a593591a805fb465932efb9ce1c0311b0c711260",
     "pc_repo":         "https://github.com/wilke/protein_structure_analysis.git",
     "pc_commit":       "7105946fdb3c77047d8fcf37286d42004abf3a45",
     "stab_app_repo":   "https://github.com/CEPI-dxkb/stabiliNNatorApp.git",
-    "stab_app_commit": "5ed9b232709f65ebf56bed9dcc11b041699a8553",
+    "stab_app_commit": "d0f1c8945e5b94d3a926940bb2122761dabee4f7",
     # p3x-app-shepherd (reqts-bvbrc-deploy.def). The old sandbox image inherited
     # this already built from the production base SIF; from clean bases it has
     # to be compiled, so the module is pinned like any other source input.

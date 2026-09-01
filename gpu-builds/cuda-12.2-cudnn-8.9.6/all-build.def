@@ -27,11 +27,11 @@ Stage: final
 
 %arguments
     ps_repo = https://github.com/CEPI-dxkb/PredictStructureApp.git
-    ps_commit = ef0914b8ca815db19a95520a481760ec980f946e
+    ps_commit = a593591a805fb465932efb9ce1c0311b0c711260
     pc_repo = https://github.com/wilke/protein_structure_analysis.git
     pc_commit = 7105946fdb3c77047d8fcf37286d42004abf3a45
     stab_app_repo = https://github.com/CEPI-dxkb/stabiliNNatorApp.git
-    stab_app_commit = 5ed9b232709f65ebf56bed9dcc11b041699a8553
+    stab_app_commit = d0f1c8945e5b94d3a926940bb2122761dabee4f7
     shepherd_repo = https://github.com/BV-BRC/p3_app_shepherd.git
     shepherd_commit = 6c78d7aedab24be01dae35b91296121e3881bc78
 
@@ -40,10 +40,10 @@ Stage: final
 %labels
     BVBRC.base_devcontainer dxkb/dev_container@sha256:36176f5e65dffb280263d7a9869db89f623aa485201bc04f71ce29c37c99c8b8
     BVBRC.base_cuda nvidia/cuda@sha256:c4e81887e4aa9f13b1119337323cba89601319ecb282383b879c4ba50510fd17
-    BVBRC.predict_structure_commit ef0914b8ca815db19a95520a481760ec980f946e
+    BVBRC.predict_structure_commit a593591a805fb465932efb9ce1c0311b0c711260
     BVBRC.protein_compare_commit 7105946fdb3c77047d8fcf37286d42004abf3a45
-    BVBRC.app_predictstructure_commit ef0914b8ca815db19a95520a481760ec980f946e
-    BVBRC.app_stabilinnator_commit 5ed9b232709f65ebf56bed9dcc11b041699a8553
+    BVBRC.app_predictstructure_commit a593591a805fb465932efb9ce1c0311b0c711260
+    BVBRC.app_stabilinnator_commit d0f1c8945e5b94d3a926940bb2122761dabee4f7
     BVBRC.app_shepherd_commit 6c78d7aedab24be01dae35b91296121e3881bc78
     BVBRC.stabilinnator_commit 28f0fc99b12be333d7143bd560f9279ce1374caa
     BVBRC.built_from all-build.def (generated)
